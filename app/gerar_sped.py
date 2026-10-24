@@ -45,6 +45,13 @@ UNIDADES = {
     "TB": "TUBO", "BL": "BLOCO", "FL": "FOLHA", "CT": "CARTELA", "BB": "BOBINA", "EMB": "EMBALAGEM",
 }
 
+# Unidade escrita por extenso na planilha ("UNIDADE", "PEÇA"): volta para a sigla
+POR_EXTENSO = {}
+for _sigla, _nome in UNIDADES.items():
+    POR_EXTENSO.setdefault(_nome, _sigla)
+POR_EXTENSO.update({"UNIDADES": "UN", "QUILO": "KG", "QUILOS": "KG", "QUILOGRAMAS": "KG", "LITROS": "L",
+                    "CAIXAS": "CX", "PACOTES": "PCT", "PECAS": "PC", "METROS": "M", "PARES": "PR", "JOGOS": "JG"})
+
 DOIS = Decimal("0.01")
 TRES = Decimal("0.001")
 SEIS = Decimal("0.000001")
@@ -99,7 +106,7 @@ def num(txt, br=False):
         return None
     if isinstance(txt, (int, float)):
         return Decimal(str(txt))
-    t = str(txt).strip().replace(" ", "")
+    t = re.sub(r"R\$|\s", "", str(txt).strip())  # "R$ 1.234,56" vindo como texto do Excel
     if not t or t in "-":
         return None
     if "," in t or (br and RE_MILHAR.fullmatch(t)) or (t.count(".") > 1 and RE_MILHAR.fullmatch(t)):
@@ -160,14 +167,25 @@ def data_ddmmaaaa(txt):
         return None
 
 
+def so_cnpj(txt):
+    """CNPJ sem máscara. Desde 31/07/2026 a Receita emite CNPJ alfanumérico
+    (IN RFB 2.229/2024): as 12 primeiras posições aceitam letras, os 2 DVs são números."""
+    return re.sub(r"[^0-9A-Z]", "", str(txt or "").upper())
+
+
+# CNPJ dentro de um texto: 11.222.333/0001-81, 12.ABC.345/01DE-35 ou sem máscara
+RE_CNPJ = re.compile(r"(?<![0-9A-Z])([0-9A-Z]{2}\.?[0-9A-Z]{3}\.?[0-9A-Z]{3}/?[0-9A-Z]{4}-?\d{2})(?![0-9A-Z])", re.I)
+
+
 def cnpj_valido(c):
-    c = so_digitos(c)
-    if len(c) != 14 or len(set(c)) == 1:
+    c = so_cnpj(c)
+    if not re.fullmatch(r"[0-9A-Z]{12}\d{2}", c) or len(set(c)) == 1:
         return False
+    valores = [ord(x) - 48 for x in c]  # dígito = ele mesmo, A = 17 ... Z = 42
     for tam in (12, 13):
         pesos = list(range(tam - 7, 1, -1)) + list(range(9, 1, -1))
-        dv = 11 - sum(int(a) * b for a, b in zip(c[:tam], pesos)) % 11
-        if int(c[tam]) != (0 if dv >= 10 else dv):
+        dv = 11 - sum(a * b for a, b in zip(valores[:tam], pesos)) % 11
+        if valores[tam] != (0 if dv >= 10 else dv):
             return False
     return True
 
@@ -212,9 +230,9 @@ def ler_relatorio_inventario(caminho, conteudo):
             empresa["nome"] = texto(re.split(r"\s{2,}", m[1].strip())[0])
         if "ie" not in empresa and (m := re.search(r"Insc(?:ri[cç][aã]o)?\.?\s*Est[^:]*:\s*([\d./-]+)", linha, re.I)):
             empresa["ie"] = so_digitos(m[1])
-        if "cnpj" not in empresa and (m := re.search(r"C\.?N\.?P\.?J\.?[^:\d]*:?\s*(\d[\d./-]{12,18}\d)", linha, re.I)):
-            empresa["cnpj"] = so_digitos(m[1])
-        if not data_inv and re.search(r"Estoque\s+existente\s+em", linha, re.I):
+        if "cnpj" not in empresa and (m := re.search(r"C\.?N\.?P\.?J\.?[^:\dA-Z]*:?\s*" + RE_CNPJ.pattern, linha, re.I)):
+            empresa["cnpj"] = so_cnpj(m[1])
+        if not data_inv and re.search(r"Estoques?\s+existentes?\s+em", linha, re.I):
             m = re.search(r"(\d{2})/(\d{2})/(\d{4})", linha)
             data_inv = data_ddmmaaaa(m[0]) if m else None
         elif re.match(r"\s*Total\s*:", linha, re.I):
@@ -230,6 +248,8 @@ def ler_fortes_fs(caminho, conteudo):
         if reg == "CAB" and len(c) > 6:
             empresa["nome"] = texto(c[4])
             data_inv = data_ddmmaaaa(c[6])
+            if cnpj := next((so_cnpj(x) for x in c[1:] if cnpj_valido(x)), None):
+                empresa["cnpj"] = cnpj
         elif reg == "GRP" and len(c) > 4:
             grupos[c[1].lstrip("0")] = c[4]
         elif reg == "UND" and len(c) > 2 and re.fullmatch(r"[A-Za-z0-9]{1,6}", c[1]):
@@ -294,16 +314,16 @@ def ler_sped(caminho, conteudo):
 COLUNAS = [
     ("codigo", ["COD. UTILIZADO", "CODIGO UTILIZADO", "COD UTILIZADO"]),
     ("codigo_alt", ["COD. PRODUTO", "COD PRODUTO", "CODIGO DO PRODUTO"]),
-    ("codigo", ["CODIGO", "COD.", "COD ", "REFERENCIA"]),
+    ("codigo", ["CODIGO", "COD.", "COD ", "REFERENCIA", "SKU", "ITEM CODE", "CODE"]),
     ("descricao", ["DESCRI", "PRODUTO", "NOME"]),
-    ("unidade", ["UNIDADE", "UND", "UNID", "UN.", "UN "]),
+    ("unidade", ["UNIDADE", "UND", "UNID", "UN.", "UN ", "UNIT "]),
     ("ncm", ["NCM", "CLASSIFICACAO"]),
     ("cest", ["CEST"]),
     ("cod_cta", ["CONTA"]),
-    ("qtd", ["QTD. NO ESTAB", "QUANTIDADE", "QTDE", "QTD"]),
+    ("qtd", ["QTD. NO ESTAB", "QUANTIDADE", "QTDE", "QTD", "SALDO", "ESTOQUE ATUAL", "ESTOQUE", "QUANTITY", "QTY"]),
     ("qtd_terc", ["QTD. EM TERCEIROS", "QTD. FORA"]),
-    ("vl_unit", ["VALOR UNIT", "VL UNIT", "VL. UNIT", "CUSTO UNIT", "UNITARIO", "CUSTO"]),
-    ("vl_item", ["VALOR TOTAL", "VL TOTAL", "VL. TOTAL", "TOTAL"]),
+    ("vl_unit", ["VALOR UNIT", "VL UNIT", "VL. UNIT", "CUSTO UNIT", "UNITARIO", "CUSTO", "UNIT COST"]),
+    ("vl_item", ["VALOR TOTAL", "VL TOTAL", "VL. TOTAL", "TOTAL", "AMOUNT"]),
     ("icms_rec", ["ICMS"]),
     ("tipo", ["TIPO"]),
 ]
@@ -312,11 +332,11 @@ COLUNAS = [
 # Palavras que tiram a coluna de um campo mesmo quando um termo dele aparece no nome:
 # "Custo Total" não é valor unitário, "Cód. Barras" e "Código NCM" não são o código do item.
 NAO_E = {
-    "codigo": ("BARRA", "EAN", "GTIN", "NCM", "CEST", "CONTA"),
+    "codigo": ("BARRA", "BARCODE", "EAN", "GTIN", "NCM", "CEST", "CONTA"),
     "codigo_alt": ("BARRA", "EAN", "GTIN"),
     "descricao": ("COD",),
-    "unidade": ("VALOR", "VL", "CUSTO", "QTD", "QUANT"),
-    "qtd": ("FORA", "TERCEIRO"),
+    "unidade": ("VALOR", "VL", "CUSTO", "QTD", "QUANT", "COST", "PRICE", "PRECO"),
+    "qtd": ("FORA", "TERCEIRO", "VALOR", "VL", "R$", "CUSTO", "MINIMO", "MAXIMO"),
     "vl_unit": ("TOTAL",),
     "vl_item": ("UNIT", "QTD", "QUANT"),
 }
@@ -345,23 +365,81 @@ def linhas_planilha(caminho):
     if ext == ".csv":
         txt = ler_texto(caminho)
         sep = ";" if txt.count(";") >= txt.count(",") else ","
-        return [list(r) for r in csv.reader(txt.splitlines(), delimiter=sep)]
+        yield [list(r) for r in csv.reader(txt.splitlines(), delimiter=sep)]
+        return
     if ext in (".xlsx", ".xlsm"):
         import openpyxl
         wb = openpyxl.load_workbook(caminho, read_only=True, data_only=True)
-        return [["" if v is None else v for v in r] for r in wb.worksheets[0].iter_rows(values_only=True)]
+        try:
+            for ws in wb.worksheets:
+                yield [["" if v is None else v for v in r] for r in ws.iter_rows(values_only=True)]
+        finally:
+            wb.close()
+        return
     import xlrd
-    wb = xlrd.open_workbook(caminho, logfile=open("nul" if sys.platform == "win32" else "/dev/null", "w"))
-    sh = wb.sheet_by_index(0)
-    return [[sh.cell_value(r, c) for c in range(sh.ncols)] for r in range(sh.nrows)]
+    with open(os.devnull, "w") as nada:
+        wb = xlrd.open_workbook(caminho, logfile=nada)
+    for sh in wb.sheets():
+        linhas = []
+        for r in range(sh.nrows):
+            linha = []
+            for c in range(sh.ncols):
+                v = sh.cell_value(r, c)
+                if sh.cell_type(r, c) == xlrd.XL_CELL_DATE:  # data no .xls é número de série
+                    v = xlrd.xldate.xldate_as_datetime(v, wb.datemode)
+                linha.append(v)
+            linhas.append(linha)
+        yield linhas
+
+
+RE_TOTAL = re.compile(r"(SUB-?\s*)?TOTA(L|IS)\b|SOMA\b|TRANSPORT|A TRANSPORTAR")
+
+
+def cabecalho(linhas):
+    """Linha do cabeçalho: a primeira, entre as 30 de cima, com um código e mais 2 campos conhecidos."""
+    for i, l in enumerate(linhas[:30]):
+        m = mapear_colunas(l)
+        if len(m) >= 3 and ("codigo" in m or "codigo_alt" in m):
+            return i, m
+    return None, None
+
+
+def titulo_da_planilha(linhas):
+    """CNPJ e data do inventário escritos nas linhas acima do cabeçalho
+    ("INVENTÁRIO EM 31/12/2025", "Empresa: ... CNPJ 11.222.333/0001-81")."""
+    empresa, data_inv = {}, None
+    for l in linhas:
+        for v in l:
+            if isinstance(v, (date,)) and not data_inv:
+                txt = sem_acento(" ".join(str(x) for x in l))
+                if re.search(r"INVENT|ESTOQUE|POSICAO|SALDO", txt):
+                    data_inv = v.date() if hasattr(v, "date") else v
+        txt = " ".join(str(v) for v in l if v not in ("", None))
+        limpo = sem_acento(txt)
+        if "cnpj" not in empresa:
+            for m in RE_CNPJ.finditer(txt.upper()):
+                if cnpj_valido(m[1]):
+                    empresa["cnpj"] = so_cnpj(m[1])
+                    break
+        if not data_inv and re.search(r"INVENT|ESTOQUE|POSICAO|SALDO", limpo) and not re.search(r"EMITID|IMPRESS|GERAD", limpo):
+            if m := re.search(r"(\d{2})/(\d{2})/(\d{4})", txt):
+                data_inv = data_ddmmaaaa(m[0])
+    return empresa, data_inv
 
 
 def ler_planilha(caminho):
-    linhas = linhas_planilha(caminho)
-    ini = next((i for i, l in enumerate(linhas[:30]) if len(mapear_colunas(l)) >= 3 and "codigo" in mapear_colunas(l)), None)
-    if ini is None:
-        raise ValueError("não achei a linha de cabeçalho (Código, Descrição, Quantidade...)")
-    mapa = mapear_colunas(linhas[ini])
+    abas = linhas_planilha(caminho)
+    try:
+        for linhas in abas:  # a primeira aba que tem um inventário
+            ini, mapa = cabecalho(linhas)
+            if ini is not None:
+                break
+        else:
+            raise ValueError("não achei a linha de cabeçalho (Código, Descrição, Quantidade...)")
+    finally:
+        abas.close()  # fecha o arquivo já: no Windows, aberto ele fica preso
+    empresa, data_inv = titulo_da_planilha(linhas[:ini])
+    total_declarado = None
     pega = lambda l, k: l[mapa[k]] if k in mapa and mapa[k] < len(l) else ""
     # Planilha com vírgula decimal (CSV brasileiro, texto no Excel): aí "1.234" é milhar
     numericas = [mapa[k] for k in ("qtd", "qtd_terc", "vl_unit", "vl_item", "icms_rec") if k in mapa]
@@ -372,6 +450,15 @@ def ler_planilha(caminho):
     for nlinha, l in enumerate(linhas[ini + 1:], start=ini + 2):
         cod = cod_texto(pega(l, "codigo")) or cod_texto(pega(l, "codigo_alt"))
         if not cod:
+            # "Total:" numa coluna qualquer de uma linha sem código
+            if any(isinstance(v, str) and RE_TOTAL.match(sem_acento(v).strip()) for v in l) and n(l, "vl_item") is not None:
+                total_declarado = n(l, "vl_item")
+            continue
+        # Linha de total, subtotal ou transporte de página: não é item. O valor dela serve
+        # para conferir o total gerado (como o "Total:" do relatório).
+        if RE_TOTAL.match(sem_acento(cod)) and not texto(pega(l, "descricao")):
+            if n(l, "vl_item") is not None:
+                total_declarado = n(l, "vl_item")
             continue
         tipo = so_digitos(pega(l, "tipo"))
         it = Item(
@@ -392,7 +479,7 @@ def ler_planilha(caminho):
     if all(not i.qtd and not i.vl_unit and not i.vl_item for i in itens):
         for i in itens:
             i.qtd = i.vl_unit = i.vl_item = None
-    return Fonte(caminho, "Planilha", itens)
+    return Fonte(caminho, "Planilha", itens, empresa, data_inv, total_declarado)
 
 
 def ler_arquivo(caminho):
@@ -443,7 +530,7 @@ def dados_empresa(fontes, args, pendencias):
     da_linha = {k: getattr(args, k) for k in ("cnpj", "ie", "uf", "cod_mun", "nome", "fantasia", "perfil", "ind_ativ", "im")
                 if getattr(args, k, None)}
     emp = {**do_arquivo, **da_linha}
-    emp["cnpj"] = so_digitos(emp.get("cnpj"))
+    emp["cnpj"] = so_cnpj(emp.get("cnpj"))
     emp["ie"] = so_digitos(emp.get("ie")) or texto(emp.get("ie"))
     cnpj = emp["cnpj"]
     if not cnpj:
@@ -475,6 +562,15 @@ def dados_empresa(fontes, args, pendencias):
     return emp
 
 
+def ncm_valido(ncm):
+    """NCM com 8 dígitos (ou None). Com 7, o Excel guardou como número e comeu o zero
+    da frente (capítulos 01 a 09): volta o zero."""
+    d = so_digitos(ncm)
+    if len(d) == 7:
+        d = d.zfill(8)
+    return d if len(d) == 8 and d != "00000000" else None
+
+
 def complementar(principal, extras, pendencias, codigos_gerados):
     indice = {}
     for f in extras:
@@ -489,6 +585,9 @@ def complementar(principal, extras, pendencias, codigos_gerados):
             for campo in ("descricao", "ncm", "unidade", "tipo", "cod_cta", "cest", "cod_barra"):
                 if not getattr(it, campo) and getattr(ref, campo):
                     setattr(it, campo, getattr(ref, campo))
+            # NCM impresso como "00" ou faltando dígitos no inventário: vale o do cadastro
+            if not ncm_valido(it.ncm) and ncm_valido(ref.ncm):
+                it.ncm = ref.ncm
             if it.vl_unit is None and it.vl_item is None and ref.vl_unit is not None:
                 it.vl_unit = ref.vl_unit
                 pendencias.append(("item", it.codigo, f"valor unitário veio de {ref.origem or 'outro arquivo'}: {fmt(ref.vl_unit, 6)}"))
@@ -500,7 +599,7 @@ def complementar(principal, extras, pendencias, codigos_gerados):
         # Tamanhos do leiaute antes de comparar códigos: dois códigos longos que só
         # diferem depois do 60º caractere viram o mesmo código no arquivo
         it.codigo = texto(it.codigo, 60)
-        it.unidade = texto(it.unidade, 6).upper() or "UN"
+        it.unidade = POR_EXTENSO.get(sem_acento(texto(it.unidade)), texto(it.unidade, 6).upper()) or "UN"
 
         if it.qtd is None:
             pendencias.append(("item", it.codigo, "sem quantidade: item fora do arquivo"))
@@ -547,7 +646,9 @@ def complementar(principal, extras, pendencias, codigos_gerados):
         if not it.descricao:
             it.descricao = f"ITEM {it.codigo}"
             pendencias.append(("item", it.codigo, "sem descrição em nenhum arquivo: usado o próprio código"))
-        if it.ncm and len(it.ncm) != 8:
+        if ncm_valido(it.ncm):
+            it.ncm = ncm_valido(it.ncm)
+        elif it.ncm:
             pendencias.append(("item", it.codigo, f"NCM \"{it.ncm}\" não tem 8 dígitos: campo deixado em branco"))
             it.ncm = ""
         if it.ind_prop in ("1", "2"):
@@ -575,7 +676,7 @@ def montar_sped(emp, itens, unidades_desc, data_inv, ini, fim, args, escritorio)
     if escritorio:
         e = escritorio
         add("0100", texto(e.get("nome"), 100), so_digitos(e.get("cpf")), texto(e.get("crc"), 15),
-            so_digitos(e.get("cnpj")), so_digitos(e.get("cep")), texto(e.get("end"), 60), texto(e.get("num"), 10),
+            so_cnpj(e.get("cnpj")), so_digitos(e.get("cep")), texto(e.get("end"), 60), texto(e.get("num"), 10),
             texto(e.get("compl"), 60), texto(e.get("bairro"), 60), so_digitos(e.get("fone"))[:11], "",
             texto(e.get("email")), so_digitos(e.get("cod_mun")))
     for un in sorted({i.unidade for i in itens}):

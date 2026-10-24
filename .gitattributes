@@ -4,3 +4,4 @@
 *.ico binary
 *.png binary
 *.woff2 binary
+app/tests/arquivos/** binary
