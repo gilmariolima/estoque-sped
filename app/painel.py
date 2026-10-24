@@ -89,7 +89,7 @@ def converter(dados):
         tipo_item=campos.get("tipo_item") or "00",
     )
     with trava:
-        cnpj = gs.so_digitos(campos.get("cnpj"))
+        cnpj = gs.so_cnpj(campos.get("cnpj"))
         if cnpj and gs.cnpj_valido(cnpj):
             cad = gs.carregar_json(gs.CADASTRO_EMPRESAS)
             reg = cad.setdefault(cnpj, {})
