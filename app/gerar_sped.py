@@ -14,6 +14,7 @@ Leiaute: Guia Prático EFD ICMS/IPI 3.2.2 (leiaute 019 em 2025, 020 em 2026).
 
 import argparse
 import calendar
+import collections
 import csv
 import json
 import os
@@ -202,15 +203,19 @@ RE_LINHA_INV = re.compile(
 def separar_codigo(txt):
     """No relatório o código e a descrição vêm juntos ("U3424 696 041/22M LEXUS ...").
     O código são os primeiros termos que têm número ou barra; um prefixo curto só de
-    letras entra quando o termo seguinte tem barra ("CO 11420JS/02")."""
+    letras entra quando o termo seguinte parece código ("CO 11420JS/02", "BG 99100-003-A",
+    "GC 1999885"), mas não num "KIT 2 PEÇAS". O "-" que separa código e descrição
+    ("5095 - EXPOSITOR", "5102- ISOTONIC") não fica em nenhum dos dois."""
     termos = txt.split()
     tem_cod = lambda t: bool(re.search(r"[\d/]", t))
     n = 0
-    if len(termos) > 1 and re.fullmatch(r"[A-Z]{1,3}", termos[0]) and "/" in termos[1]:
+    if len(termos) > 1 and re.fullmatch(r"[A-Z]{1,3}", termos[0]) and tem_cod(termos[1]) and len(termos[1]) >= 4:
         n = 2
     while n < len(termos) - 1 and tem_cod(termos[n]):
         n += 1
-    return " ".join(termos[:n]), " ".join(termos[n:])
+    codigo = " ".join(termos[:n]).rstrip("-–").rstrip()
+    descricao = " ".join(termos[n:]).lstrip("-–").lstrip()
+    return codigo, descricao
 
 
 def ler_relatorio_inventario(caminho, conteudo):
@@ -572,9 +577,10 @@ def ncm_valido(ncm):
 
 
 def complementar(principal, extras, pendencias, codigos_gerados):
-    indice = {}
+    indice, arquivo_de = {}, {}
     for f in extras:
         for it in f.itens:
+            arquivo_de[id(it)] = f.caminho.name
             for c in {it.codigo, *it.aliases}:
                 indice.setdefault(c.upper(), it)
 
@@ -582,6 +588,11 @@ def complementar(principal, extras, pendencias, codigos_gerados):
     for it in principal.itens:
         ref = indice.get(it.codigo.upper()) or next((indice[a.upper()] for a in it.aliases if a.upper() in indice), None)
         if ref:
+            # O complemento não muda a quantidade do inventário, mas a divergência é avisada:
+            # é o que o contador quer conferir (ex.: inventário x estoque escriturado)
+            if it.qtd is not None and ref.qtd is not None and it.qtd != ref.qtd:
+                pendencias.append(("item", it.codigo, f"quantidade {fmt(it.qtd, 3)} difere da de "
+                                   f"{arquivo_de[id(ref)]} ({fmt(ref.qtd, 3)}): mantida a do inventário"))
             for campo in ("descricao", "ncm", "unidade", "tipo", "cod_cta", "cest", "cod_barra"):
                 if not getattr(it, campo) and getattr(ref, campo):
                     setattr(it, campo, getattr(ref, campo))
@@ -795,6 +806,14 @@ def converter(principal, extras, args):
         escritorio = {}
         pendencias.append(("arquivo", "0100", "dados do escritório não cadastrados: registro 0100 (contabilista) não gerado"))
 
+    if not itens and principal.itens:
+        # Sem isso sairia um SPED com o bloco H vazio, que parece certo e não tem inventário
+        motivo = collections.Counter(m for t, _, m in pendencias if t == "item").most_common(1)
+        dica = (" O arquivo não tem valores: use-o junto com o inventário (relatório, .FS ou planilha com valor unitário)."
+                if not any(f.tem_valores for f in [principal, *extras]) else "")
+        raise ErroConversao(f"Nenhum item de {principal.caminho.name} pôde entrar no arquivo ({len(principal.itens)} lido(s))"
+                            + (f" ({motivo[0][0]})" if motivo else "") + "." + dica)
+
     reg, total = montar_sped(emp, itens, unidades, data_inv, ini, fim, args, escritorio)
 
     if principal.total_declarado is not None:
@@ -804,12 +823,41 @@ def converter(principal, extras, args):
     return Resultado(principal, emp, itens, pendencias, reg, total, data_inv, ini, fim)
 
 
+def numero_dominio(valor):
+    """Número como o Excel em português escreve ao gravar texto: vírgula decimal, sem
+    milhar e sem zeros sobrando ("280", "4,27", "0,0689")."""
+    if valor is None:
+        return "0"
+    t = f"{valor.normalize():f}"
+    if "." in t:
+        t = t.rstrip("0").rstrip(".")
+    return t.replace(".", ",")
+
+
+def linhas_dominio(res):
+    """Arquivo de importação do inventário no Domínio: o mesmo "produtos.txt" que a macro da
+    Planilha Modelo grava. Sem cabeçalho, separado por ";", na ordem: código, descrição,
+    unidade, NCM, CEST, conta contábil, quantidade, valor unitário, valor total, ICMS recuperável."""
+    linhas = []
+    for it in res.itens:
+        vl_item = it.vl_item.quantize(DOIS, ROUND_HALF_UP)
+        campos = [it.codigo, it.descricao, it.unidade, it.ncm, it.cest if len(it.cest) == 7 else "", texto(it.cod_cta),
+                  numero_dominio(it.qtd.quantize(TRES, ROUND_HALF_UP)), numero_dominio(it.vl_unit.quantize(SEIS, ROUND_HALF_UP)),
+                  numero_dominio(vl_item), numero_dominio(it.icms_rec.quantize(DOIS, ROUND_HALF_UP) if it.icms_rec else None)]
+        linhas.append(";".join(texto(c).replace(";", ",") for c in campos))
+    return linhas
+
+
 def gravar(res, pasta):
     pasta = Path(pasta)
     pasta.mkdir(parents=True, exist_ok=True)
     arq = pasta / f"{res.base}.txt"
     with open(arq, "w", encoding="latin-1", errors="replace", newline="\r\n") as fp:
         fp.write("\n".join(res.registros) + "\n")
+    # Mesmo nome com DOMINIO_ no lugar de SPED_ (a lista de gerados só procura SPED_*.txt)
+    arq_dom = pasta / f"DOMINIO_{res.base.removeprefix('SPED_')}.txt"
+    with open(arq_dom, "w", encoding="cp1252", errors="replace", newline="\r\n") as fp:
+        fp.write("\n".join(linhas_dominio(res)) + "\n")
     arq_pend = pasta / f"{res.base}_pendencias.csv"
     if res.pendencias:
         with open(arq_pend, "w", encoding="utf-8-sig", newline="") as fp:
@@ -818,7 +866,7 @@ def gravar(res, pasta):
             w.writerows(res.pendencias)
     elif arq_pend.exists():
         arq_pend.unlink()
-    return arq, arq_pend
+    return arq, arq_pend, arq_dom
 
 
 def processar(principal, extras, args):
@@ -826,7 +874,7 @@ def processar(principal, extras, args):
         res = converter(principal, extras, args)
     except ErroConversao as e:
         raise SystemExit(str(e))
-    arq, arq_pend = gravar(res, args.saida or DADOS / "saida")
+    arq, arq_pend, arq_dom = gravar(res, args.saida or DADOS / "saida")
     emp = res.emp
     print(f"\n{principal.caminho.name}  ->  {arq}")
     print(f"  empresa: {emp.get('nome') or '?'}  CNPJ {emp.get('cnpj') or '?'}  IE {emp.get('ie') or '?'}  UF {emp.get('uf') or '?'}")
@@ -836,6 +884,7 @@ def processar(principal, extras, args):
         print(f"  total no arquivo de origem: {fmt(principal.total_declarado, 2)}")
     if res.pendencias:
         print(f"  {len(res.pendencias)} pendências em {arq_pend.name}")
+    print(f"  para importar no Domínio: {arq_dom.name}")
     return arq
 
 

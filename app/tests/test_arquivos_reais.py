@@ -106,6 +106,72 @@ class ArquivosReais(unittest.TestCase):
         self.assertLess(time.perf_counter() - ini, 60)
 
 
+class FormatoDosArquivosReais(unittest.TestCase):
+    """Cópias sintéticas (empresa e produtos inventados) dos arquivos reais de clientes:
+    relatório de inventário com código e descrição juntos, .FS da Fortes e Estoque Escriturado."""
+
+    def test_relatorio_codigo_e_descricao_juntos(self):
+        res, reg = gerar("relatorio_formato_real.txt", uf="CE", cod_mun="2304400")
+        cad = {c[1]: c[2] for c in reg("0200")}
+        self.assertEqual(cad["5095"], "EXPOSITOR 6 BALDAS")  # sem o "- " na frente
+        self.assertEqual(cad["5102"], "ISOTONIC DRINK MONODOSIS (LIMON)")  # "5102-" sem o traço
+        self.assertEqual(cad["BG 99100-003-A"], "EXP MEDIO EM PLASTICO P/")  # prefixo de letras
+        self.assertEqual(cad["GC 1999885"], "EXPOSITOR EM MADEIRA")
+        self.assertEqual(cad["SEMCOD0001"], "SQUEEZE BRANCA 790ML")  # sem código no relatório
+        # mesmo código com outra descrição: dois itens, o segundo renomeado e avisado
+        self.assertEqual((cad["TI11397JS/61"], cad["TI11397JS/61-2"]), ("TIJA P/ RELOGIO 3H", "TIJA P/ RELOGIO 9H"))
+        self.assertEqual(res.emp, {**res.emp, "nome": "COMERCIAL MODELO - FILIAL", "cnpj": "11222333000181", "ie": "061234567"})
+        # o total impresso tem 1 centavo a mais que a soma das linhas: vale a soma (H005 = soma dos H010)
+        self.assertEqual(res.total, Decimal("40734.74"))
+        self.assertEqual(res.principal.total_declarado, Decimal("40734.75"))
+        self.assertTrue(any(t == "total" for t, _, _ in res.pendencias))
+
+    def test_fortes_layout_real(self):
+        res, reg = gerar("fortes_layout_real.FS")
+        h010 = {c[1]: c for c in reg("H010")}
+        self.assertEqual(sorted(h010), ["10099", "10497", "BS1277"])  # código próprio quando existe
+        self.assertEqual(h010["10497"][3:6], ["27060,000", "0,110000", "2976,60"])  # ponto decimal no .FS
+        tipos = {c[1]: c[6] for c in reg("0200")}
+        self.assertEqual(tipos, {"BS1277": "04", "10099": "01", "10497": "01"})  # tipo vem do grupo
+        self.assertEqual(f"{res.data_inv:%d/%m/%Y}", "31/12/2024")
+        self.assertEqual(res.total, Decimal("4598.20"))
+        self.assertNotIn("FALSE", {c[1] for c in reg("0190")})
+
+    def test_estoque_escriturado_sozinho_nao_gera_bloco_h_vazio(self):
+        with self.assertRaisesRegex(gs.ErroConversao, "não tem valores"):
+            gerar("estoque_escriturado_formato_real.xls", data_inv="31/12/2024")
+
+    def test_fs_com_estoque_escriturado_avisa_quantidade_divergente(self):
+        res, reg = gerar("fortes_layout_real.FS", "estoque_escriturado_formato_real.xls")
+        self.assertEqual(res.principal.caminho.name, "fortes_layout_real.FS")
+        avisos = [(c, m) for t, c, m in res.pendencias if "difere da de" in m]
+        self.assertEqual(avisos, [("10099", "quantidade 280,000 difere da de estoque_escriturado_formato_real.xls (300,000): mantida a do inventário")])
+        self.assertEqual(res.total, Decimal("4598.20"))  # o complemento não muda o inventário
+
+
+class ArquivoDominio(unittest.TestCase):
+    def test_leiaute_da_planilha_modelo(self):
+        res, _ = gerar("fortes_layout_real.FS")
+        linhas = gs.linhas_dominio(res)
+        self.assertIn("10497;REGULADOR DE METAL 7MM;UN;83089010;;;27060;0,11;2976,6;0", linhas)
+        self.assertEqual({len(l.split(";")) for l in linhas}, {10})
+        soma = sum(gs.num(l.split(";")[8], br=True) for l in linhas)
+        self.assertEqual(soma, res.total)
+
+    def test_gravado_ao_lado_do_sped(self):
+        res, _ = gerar("loja_cp1252.csv", data_inv="31/12/2025")
+        sped, _, dom = gs.gravar(res, tempfile.mkdtemp())
+        self.assertEqual(dom.name, sped.name.replace("SPED_", "DOMINIO_"))
+        bruto = dom.read_bytes()
+        self.assertIn("CALÇA JEANS 42".encode("cp1252"), bruto)  # Windows-1252, como a macro grava
+        self.assertTrue(bruto.endswith(b"\r\n") and b"\n" not in bruto.replace(b"\r\n", b""))
+
+    def test_numeros_como_o_excel_grava(self):
+        self.assertEqual(gs.numero_dominio(Decimal("280.000")), "280")
+        self.assertEqual(gs.numero_dominio(Decimal("0.068900")), "0,0689")
+        self.assertEqual(gs.numero_dominio(None), "0")
+
+
 class CnpjAlfanumerico(unittest.TestCase):
     def test_exemplos_oficiais(self):
         self.assertTrue(gs.cnpj_valido("12.ABC.345/01DE-35"))  # exemplo do Serpro

@@ -9,7 +9,16 @@ Entradas aceitas (o tipo é reconhecido pelo conteúdo):
 - **bloco H** solto ou SPED completo (`.txt` com `|H010|`);
 - **planilhas** `.xls`, `.xlsx`, `.csv` (Planilha Modelo, Estoque Escriturado ou parecidas).
 
-O primeiro arquivo com valores é o inventário; os demais só completam descrição, NCM, unidade, tipo do item, conta contábil e custo unitário. O que não dá para resolver sozinho vai para o CSV de pendências.
+O primeiro arquivo com valores é o inventário; os demais só completam descrição, NCM, unidade, tipo do item, conta contábil e custo unitário (e, se trouxerem quantidade diferente, isso aparece nas pendências). O que não dá para resolver sozinho vai para o CSV de pendências.
+
+Cada conversão gera dois arquivos:
+
+| Arquivo | Para quê |
+|---|---|
+| `SPED_<CNPJ>_<data>.txt` | EFD ICMS/IPI com o bloco H, no leiaute da Receita, para o PVA |
+| `DOMINIO_<CNPJ>_<data>.txt` | o inventário no leiaute do `produtos.txt` da Planilha Modelo (sem cabeçalho, separado por `;`: código, descrição, unidade, NCM, CEST, conta contábil, quantidade, valor unitário, valor total, ICMS recuperável), para importar no Domínio |
+
+Os dois saem do mesmo inventário e têm o mesmo total.
 
 ## Instalar como app do Windows
 
@@ -68,6 +77,12 @@ Estrutura:
 | `electron/` | o app desktop: janela, motor, pasta de dados e migração da versão antiga |
 | `scripts/` | montagem do Python embutido |
 | `test/` | testes do app |
+
+## Arquivos de clientes
+
+O conversor foi conferido com inventários reais (relatórios de inventário de matriz e filial com quase 8 mil itens, um `.FS` da Fortes, Estoque Escriturado e a Planilha Modelo): o total do SPED bateu com o total do relatório, a não ser quando o próprio relatório arredonda o total (aí vale a soma das linhas, que é o que o PVA exige no H005, e a diferença aparece nas pendências). Os casos que esses arquivos mostraram estão em `app/tests/arquivos` como cópias sintéticas, sem dados de cliente.
+
+No relatório de inventário o código e a descrição vêm na mesma coluna. O app separa pelos primeiros termos com número ou barra (`2022GSG/03 RELOGIO ...`), aceita um prefixo curto de letras (`BG 99100-003-A`, `GC 1999885`) e tira o traço entre os dois (`5095 - EXPOSITOR`). Linha sem código vira `SEMCOD0001`... e código repetido com outra descrição vira `<código>-2`: os dois casos vão para as pendências, para conferir com o cliente.
 
 ## Observações fiscais
 

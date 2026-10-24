@@ -80,6 +80,7 @@ async function converter(msg = "Gerando o SPED…") {
   if (r.erro) {
     $("#resultado").hidden = !r.campos;
     $("#btnBaixar").hidden = true;
+    $("#btnDominio").hidden = true;
     return;
   }
   estado.limite = POR_PAGINA;
@@ -184,6 +185,8 @@ function desenharResultado() {
 
   $("#btnBaixar").hidden = false;
   $("#btnBaixar").href = `/baixar/${encodeURIComponent(r.arquivo)}`;
+  $("#btnDominio").hidden = !r.dominio;
+  if (r.dominio) $("#btnDominio").href = `/baixar/${encodeURIComponent(r.dominio)}`;
   $("#btnPend").hidden = !r.pendencias;
   if (r.pendencias) $("#btnPend").href = `/baixar/${encodeURIComponent(r.pendencias)}`;
   desenharArquivos(r.arquivos);
@@ -194,6 +197,7 @@ function limparResultado() {
   estado.res = null;
   $("#resultado").hidden = true;
   $("#btnBaixar").hidden = true;
+  $("#btnDominio").hidden = true;
   $("#erroConv").hidden = true;
   desenharArquivos([]);
 }
@@ -280,6 +284,7 @@ $("#listaGerados").addEventListener("click", (e) => {
   menu.className = "menu-pop";
   menu.innerHTML = `
     <button class="menu-item" data-acao="ver"><i class="fa-solid fa-eye"></i>Ver arquivo</button>
+    ${g.dominio ? `<a class="menu-item" href="/baixar/${encodeURIComponent(g.dominio)}"><i class="fa-solid fa-file-export"></i>Baixar para o Domínio</a>` : ""}
     ${g.pendencias ? `<a class="menu-item" href="/baixar/${encodeURIComponent(g.pendencias)}"><i class="fa-solid fa-file-csv"></i>Baixar pendências</a>` : ""}
     <button class="menu-item perigo" data-acao="excluir"><i class="fa-solid fa-trash"></i>Excluir</button>`;
   document.body.append(menu);
