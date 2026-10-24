@@ -750,7 +750,7 @@ def periodo(args, data_inv):
     if args.periodo:
         m = re.fullmatch(r"\s*(\d{1,2})\s*[/\-.]\s*(\d{4})\s*", args.periodo)
         if not m or not 1 <= int(m[1]) <= 12:
-            raise ErroConversao(f"Período \"{args.periodo}\" inválido: use mês/ano, por exemplo 02/2026.")
+            raise ErroConversao(f"Período \"{args.periodo}\" inválido: use mês/ano, por exemplo 02/2026.", "periodo")
         mes, ano = int(m[1]), int(m[2])
     else:
         mes, ano = data_inv.month, data_inv.year
@@ -759,7 +759,12 @@ def periodo(args, data_inv):
 
 
 class ErroConversao(Exception):
-    pass
+    """Erro que o usuário resolve: a mensagem vai para a tela. `campo` é o campo do formulário
+    que resolve o problema (o painel destaca e põe o cursor nele)."""
+
+    def __init__(self, mensagem, campo=None):
+        super().__init__(mensagem)
+        self.campo = campo
 
 
 @dataclass
@@ -781,17 +786,28 @@ class Resultado:
 
 def converter(principal, extras, args):
     pendencias, gerados = [], [0]
+    # Sem valor em nenhum arquivo não há inventário a gerar: avisa isso antes de pedir a data,
+    # que não adiantaria nada (ex.: Estoque Escriturado, que só tem quantidades)
+    if principal.itens and not any(f.tem_valores for f in [principal, *extras]):
+        tem_qtd = any(i.qtd is not None for i in principal.itens)
+        raise ErroConversao(
+            f"{principal.caminho.name} " + ("só tem quantidades, sem valor unitário nem total" if tem_qtd
+                                           else "não tem quantidades nem valores (é só cadastro)")
+            + ", e o SPED exige o valor "
+            "de cada item. Junte um arquivo com os valores do mesmo inventário (o relatório de inventário, "
+            "o .FS da Fortes ou uma planilha com custo unitário): ele completa os valores pelo código.")
     if args.data_inv:
         data_inv = data_ddmmaaaa(args.data_inv)
         if not data_inv:
-            raise ErroConversao(f"Data do inventário \"{args.data_inv}\" inválida: use dia/mês/ano, por exemplo 31/12/2025.")
+            raise ErroConversao(f"Data do inventário \"{args.data_inv}\" inválida: use dia/mês/ano, por exemplo 31/12/2025.", "data_inv")
     else:
         data_inv = principal.data_inv
     if not data_inv:
         for f in extras:
             data_inv = data_inv or f.data_inv
     if not data_inv:
-        raise ErroConversao("Data do inventário não encontrada: informe a data (ex.: 31/12/2025).")
+        raise ErroConversao("O arquivo não informa a data do inventário: digite em \"Data do inventário\" (ex.: 31/12/2025) "
+                            "e clique em Gerar de novo.", "data_inv")
 
     emp = dados_empresa([principal, *extras], args, pendencias)
     itens = complementar(principal, extras, pendencias, gerados)
@@ -800,7 +816,7 @@ def converter(principal, extras, args):
         unidades.update(f.unidades)
     ini, fim = periodo(args, data_inv)
     if data_inv > fim:
-        raise ErroConversao(f"A data do inventário ({data_inv:%d/%m/%Y}) é depois do fim do período ({fim:%d/%m/%Y}).")
+        raise ErroConversao(f"A data do inventário ({data_inv:%d/%m/%Y}) é depois do fim do período ({fim:%d/%m/%Y}).", "periodo")
     escritorio = carregar_json(ESCRITORIO)
     if not (escritorio.get("nome") and escritorio.get("cpf")):
         escritorio = {}

@@ -63,6 +63,23 @@ def resumo_fonte(caminho):
         return None, {"nome": caminho.name, "erro": str(e)}
 
 
+def campos_conhecidos(principal, extras, campos, args):
+    """Dados da empresa e do inventário que já se sabem sem conseguir gerar o arquivo:
+    o que foi digitado, o que veio nos arquivos e o cadastro salvo da empresa."""
+    emp = {}
+    for f in reversed([principal, *extras]):
+        emp.update({k: v for k, v in f.empresa.items() if v})
+    cnpj = gs.so_cnpj(campos.get("cnpj") or emp.get("cnpj"))
+    salvo = gs.carregar_json(gs.CADASTRO_EMPRESAS).get(cnpj, {}) if cnpj else {}
+    valor = lambda k, padrao="": campos.get(k) or emp.get(k) or salvo.get(k) or padrao
+    data = principal.data_inv or next((f.data_inv for f in extras if f.data_inv), None)
+    return {
+        "cnpj": cnpj, "ie": valor("ie"), "uf": valor("uf").upper(), "cod_mun": valor("cod_mun"), "nome": valor("nome"),
+        "perfil": valor("perfil", "A"), "ind_ativ": valor("ind_ativ", "1"), "periodo": campos.get("periodo", ""),
+        "data_inv": campos.get("data_inv") or (f"{data:%d/%m/%Y}" if data else ""), "tipo_item": args.tipo_item,
+    }
+
+
 def converter(dados):
     pasta = pasta_lote(dados.get("lote"))
     ordem = dados.get("arquivos") or []
@@ -98,7 +115,10 @@ def converter(dados):
         try:
             res = gs.converter(principal, extras, args)
         except gs.ErroConversao as e:
-            return {"erro": str(e), "arquivos": arquivos, "principal": principal.caminho.name}
+            # Devolve o que já se sabe para a tela mostrar o formulário: sem ele não haveria
+            # onde digitar a data que falta (ex.: Estoque Escriturado, que não traz data)
+            return {"erro": str(e), "campo": e.campo, "arquivos": arquivos, "principal": principal.caminho.name,
+                    "campos": campos_conhecidos(principal, extras, campos, args)}
         arq, arq_pend, arq_dom = gs.gravar(res, SAIDA)
 
     por_item = {}

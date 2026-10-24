@@ -203,6 +203,23 @@ class Painel(unittest.TestCase):
         status, corpo = self.pedir("GET", "/api/escritorio", Host=f"localhost:{self.porta}")
         self.assertEqual(json.loads(corpo)["nome"], "ESCRITORIO")
 
+    def test_sem_data_o_formulario_volta_e_depois_gera(self):
+        _, corpo = self.pedir("POST", "/api/lote")
+        lote = json.loads(corpo)["lote"]
+        xls = (APP / "tests" / "arquivos" / "cod_produto_antigo.xls").read_bytes()
+        self.pedir("POST", f"/api/enviar?lote={lote}&nome=sem_data.xls", xls)
+        pedido = {"lote": lote, "arquivos": ["sem_data.xls"], "campos": {"cnpj": "11.222.333/0001-81", "uf": "ce"}}
+        _, corpo = self.pedir("POST", "/api/converter", json.dumps(pedido).encode())
+        r = json.loads(corpo)
+        self.assertIn("não informa a data", r["erro"])
+        self.assertEqual(r["campo"], "data_inv")  # a tela destaca e põe o cursor aqui
+        self.assertEqual((r["campos"]["cnpj"], r["campos"]["uf"], r["campos"]["data_inv"]), ("11222333000181", "CE", ""))
+        pedido["campos"]["data_inv"] = "31/12/2025"
+        _, corpo = self.pedir("POST", "/api/converter", json.dumps(pedido).encode())
+        r = json.loads(corpo)
+        self.assertNotIn("erro", r)
+        self.assertEqual((r["resumo"]["itens"], r["resumo"]["total"], r["campos"]["data_inv"]), (2, "124,67", "31/12/2025"))
+
     def test_converter_pelo_painel(self):
         _, corpo = self.pedir("POST", "/api/lote")
         lote = json.loads(corpo)["lote"]
