@@ -78,6 +78,10 @@ Estrutura:
 | `scripts/` | montagem do Python embutido |
 | `test/` | testes do app |
 
+## Modelo de planilha para o cliente
+
+`modelos/Modelo_Inventario_Estoque_SPED.xlsx` é a planilha para mandar ao cliente quando ele não tem um relatório de inventário: empresa, CNPJ e data no topo (o app lê dali), uma linha por item com código, descrição, unidade, NCM, CEST, conta contábil, quantidade, valor unitário (o total é calculado) e ICMS recuperável, uma aba de instruções e uma de exemplo. Preenchida, é só arrastar no Estoque SPED. Para mudar o modelo, edite `modelos/gerar_modelo.py` e rode de novo.
+
 ## Arquivos de clientes
 
 O conversor foi conferido com inventários reais (relatórios de inventário de matriz e filial com quase 8 mil itens, um `.FS` da Fortes, Estoque Escriturado e a Planilha Modelo): o total do SPED bateu com o total do relatório, a não ser quando o próprio relatório arredonda o total (aí vale a soma das linhas, que é o que o PVA exige no H005, e a diferença aparece nas pendências). Os casos que esses arquivos mostraram estão em `app/tests/arquivos` como cópias sintéticas, sem dados de cliente.

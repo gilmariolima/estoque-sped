@@ -183,6 +183,25 @@ class ArquivoDominio(unittest.TestCase):
         self.assertEqual(gs.numero_dominio(None), "0")
 
 
+class ModeloDePlanilha(unittest.TestCase):
+    """O modelo que o escritório manda para o cliente (modelos/Modelo_Inventario_Estoque_SPED.xlsx)."""
+
+    def test_modelo_em_branco_nao_gera_sped_vazio(self):
+        fonte = gs.ler_arquivo(APP.parent / "modelos" / "Modelo_Inventario_Estoque_SPED.xlsx")
+        with self.assertRaisesRegex(gs.ErroConversao, "não tem nenhum item"):
+            gs.converter(fonte, [], gs.opcoes(sem_consulta=True))
+
+    def test_modelo_preenchido(self):
+        res, reg = gerar("modelo_preenchido.xlsx", uf="CE", cod_mun="2304400", ie="061234567")
+        self.assertEqual(res.emp["nome"], "COMERCIAL EXEMPLO LTDA")  # lido da célula "Empresa:"
+        self.assertEqual(res.emp["cnpj"], "12ABC34501DE35")
+        self.assertEqual(f"{res.data_inv:%d/%m/%Y}", "31/12/2025")
+        self.assertEqual(res.total, res.principal.total_declarado)  # "Total do inventário:" do topo
+        h010 = {c[1]: c for c in reg("H010")}
+        self.assertEqual(h010["A-77"][2:6], ["PCT", "40,000", "6,789000", "271,56"])  # só o total; "Pacote"
+        self.assertEqual([p for p in res.pendencias if p[0] != "arquivo"], [])
+
+
 class CnpjAlfanumerico(unittest.TestCase):
     def test_exemplos_oficiais(self):
         self.assertTrue(gs.cnpj_valido("12.ABC.345/01DE-35"))  # exemplo do Serpro
