@@ -1,0 +1,752 @@
+"""Gera o arquivo EFD ICMS/IPI (SPED Fiscal) com o inventário no bloco H.
+
+Entradas aceitas (o tipo é detectado pelo conteúdo):
+  - relatório "Registro de Inventário" em texto (colunas de largura fixa)
+  - arquivo .FS da Fortes (registros CAB/GRP/UND/PRO/IIV)
+  - bloco H solto ou SPED completo (.txt com |H010|)
+  - planilhas .xls/.xlsx/.csv (Planilha Modelo, Estoque Escriturado ou parecidas)
+
+O primeiro arquivo com valores é o inventário; os demais só completam
+descrição, NCM, unidade, tipo do item, conta contábil e custo unitário.
+
+Leiaute: Guia Prático EFD ICMS/IPI 3.2.2 (leiaute 019 em 2025, 020 em 2026).
+"""
+
+import argparse
+import calendar
+import csv
+import json
+import os
+import re
+import sys
+import unicodedata
+import urllib.request
+from dataclasses import dataclass, field
+from datetime import date
+from decimal import Decimal, ROUND_HALF_UP
+from pathlib import Path
+
+PASTA = Path(__file__).resolve().parent
+# No app instalado os dados ficam fora da pasta do programa (ESTOQUE_DADOS)
+DADOS = Path(os.environ.get("ESTOQUE_DADOS") or PASTA)
+CADASTRO_EMPRESAS = DADOS / "empresas.json"
+ESCRITORIO = DADOS / "escritorio.json"
+
+# Código da versão do leiaute por ano do DT_FIN (Ato COTEPE/ICMS 44/2018 e alterações)
+VERSAO_LEIAUTE = {2020: "014", 2021: "015", 2022: "016", 2023: "017", 2024: "018", 2025: "019", 2026: "020"}
+
+UNIDADES = {
+    "UN": "UNIDADE", "UND": "UNIDADE", "UNID": "UNIDADE", "PC": "PECA", "PCA": "PECA", "PCS": "PECAS",
+    "KG": "QUILOGRAMA", "G": "GRAMA", "GR": "GRAMA", "MG": "MILIGRAMA", "TON": "TONELADA", "T": "TONELADA",
+    "M": "METRO", "MT": "METRO", "MTS": "METROS", "CM": "CENTIMETRO", "MM": "MILIMETRO", "M2": "METRO QUADRADO",
+    "M3": "METRO CUBICO", "L": "LITRO", "LT": "LITRO", "ML": "MILILITRO", "CX": "CAIXA", "PCT": "PACOTE",
+    "PCTE": "PACOTE", "PT": "PACOTE", "FD": "FARDO", "SC": "SACO", "RL": "ROLO", "PR": "PAR", "JG": "JOGO",
+    "KIT": "KIT", "DZ": "DUZIA", "CJ": "CONJUNTO", "BD": "BALDE", "GL": "GALAO", "LA": "LATA", "FR": "FRASCO",
+    "TB": "TUBO", "BL": "BLOCO", "FL": "FOLHA", "CT": "CARTELA", "BB": "BOBINA", "EMB": "EMBALAGEM",
+}
+
+DOIS = Decimal("0.01")
+TRES = Decimal("0.001")
+SEIS = Decimal("0.000001")
+
+
+@dataclass
+class Item:
+    codigo: str
+    descricao: str = ""
+    unidade: str = ""
+    ncm: str = ""
+    qtd: Decimal | None = None
+    vl_unit: Decimal | None = None
+    vl_item: Decimal | None = None
+    ind_prop: str = "0"
+    cod_cta: str = ""
+    icms_rec: Decimal | None = None
+    tipo: str = ""
+    cest: str = ""
+    cod_barra: str = ""
+    aliases: set = field(default_factory=set)
+    origem: str = ""
+
+
+@dataclass
+class Fonte:
+    caminho: Path
+    tipo: str
+    itens: list
+    empresa: dict = field(default_factory=dict)
+    data_inv: date | None = None
+    total_declarado: Decimal | None = None
+    unidades: dict = field(default_factory=dict)
+
+    @property
+    def tem_valores(self):
+        return any(i.vl_unit is not None or i.vl_item is not None for i in self.itens)
+
+
+# ---------------------------------------------------------------- utilidades
+
+def num(txt):
+    """Converte '1.234,56', '1234.5600', 1234.5 ou '' em Decimal (ou None)."""
+    if txt is None:
+        return None
+    if isinstance(txt, (int, float)):
+        return Decimal(str(txt))
+    t = str(txt).strip().replace(" ", "")
+    if not t or t in "-":
+        return None
+    if "," in t:
+        t = t.replace(".", "").replace(",", ".")
+    try:
+        return Decimal(t)
+    except Exception:
+        return None
+
+
+def fmt(valor, casas):
+    q = {2: DOIS, 3: TRES, 6: SEIS}[casas]
+    return f"{valor.quantize(q, ROUND_HALF_UP):f}".replace(".", ",")
+
+
+def so_digitos(txt):
+    return re.sub(r"\D", "", str(txt or ""))
+
+
+def texto(txt, tam=None):
+    """Campo C: sem pipe, sem caracteres de controle, sem espaços nas pontas."""
+    t = re.sub(r"[\x00-\x1f|]", " ", str(txt or ""))
+    t = re.sub(r"\s+", " ", t).strip()
+    return t[:tam].strip() if tam else t
+
+
+def cod_texto(valor):
+    """Código vindo de planilha: 20.0 vira '20'."""
+    if isinstance(valor, float) and valor.is_integer():
+        return str(int(valor))
+    return texto(valor)
+
+
+def sem_acento(t):
+    return unicodedata.normalize("NFKD", str(t)).encode("ascii", "ignore").decode().upper()
+
+
+def ler_texto(caminho):
+    dados = caminho.read_bytes()
+    for cod in ("utf-8", "cp1252", "latin-1"):
+        try:
+            return dados.decode(cod)
+        except UnicodeDecodeError:
+            continue
+    return dados.decode("latin-1", "replace")
+
+
+def data_ddmmaaaa(txt):
+    d = so_digitos(txt)
+    if len(d) == 8:
+        if int(d[:4]) > 1900 and int(d[4:6]) <= 12:  # aaaammdd
+            return date(int(d[:4]), int(d[4:6]), int(d[6:]))
+        return date(int(d[4:]), int(d[2:4]), int(d[:2]))
+    return None
+
+
+def cnpj_valido(c):
+    c = so_digitos(c)
+    if len(c) != 14 or len(set(c)) == 1:
+        return False
+    for tam in (12, 13):
+        pesos = list(range(tam - 7, 1, -1)) + list(range(9, 1, -1))
+        dv = 11 - sum(int(a) * b for a, b in zip(c[:tam], pesos)) % 11
+        if int(c[tam]) != (0 if dv >= 10 else dv):
+            return False
+    return True
+
+
+# ---------------------------------------------------------------- leitores
+
+RE_LINHA_INV = re.compile(
+    r"^(?P<ncm>\d{2,8})\s+(?P<texto>.+?)\s{2,}(?P<un>\S{1,6})\s+(?P<qtd>-?[\d.]+,\d+)\s+"
+    r"(?P<unit>-?[\d.]+,\d+)\s+(?P<total>-?[\d.]+,\d+)\s*$"
+)
+
+
+def separar_codigo(txt):
+    """No relatório o código e a descrição vêm juntos ("U3424 696 041/22M LEXUS ...").
+    O código são os primeiros termos que têm número ou barra; um prefixo curto só de
+    letras entra quando o termo seguinte tem barra ("CO 11420JS/02")."""
+    termos = txt.split()
+    tem_cod = lambda t: bool(re.search(r"[\d/]", t))
+    n = 0
+    if len(termos) > 1 and re.fullmatch(r"[A-Z]{1,3}", termos[0]) and "/" in termos[1]:
+        n = 2
+    while n < len(termos) - 1 and tem_cod(termos[n]):
+        n += 1
+    return " ".join(termos[:n]), " ".join(termos[n:])
+
+
+def ler_relatorio_inventario(caminho, conteudo):
+    itens, empresa, data_inv, total = [], {}, None, None
+    for linha in conteudo.splitlines():
+        m = RE_LINHA_INV.match(linha)
+        if m:
+            codigo, descr = separar_codigo(m["texto"])
+            itens.append(Item(
+                codigo=codigo, descricao=descr or m["texto"], unidade=m["un"], ncm=m["ncm"],
+                qtd=num(m["qtd"]), vl_unit=num(m["unit"]), vl_item=num(m["total"]),
+                origem=m["texto"],
+            ))
+            continue
+        if "Firma" in linha and ":" in linha and "nome" not in empresa:
+            empresa["nome"] = texto(linha.split(":", 1)[1])
+        elif "Insc. Est" in linha and "ie" not in empresa:
+            empresa["ie"] = so_digitos(linha.split(":", 1)[1].split("CNPJ")[0])
+            if "CNPJ" in linha:
+                empresa["cnpj"] = so_digitos(linha.split("CNPJ", 1)[1])
+        elif "Estoque existente em" in linha and not data_inv:
+            m = re.search(r"(\d{2})/(\d{2})/(\d{4})", linha)
+            data_inv = date(int(m[3]), int(m[2]), int(m[1])) if m else None
+        elif linha.strip().startswith("Total:"):
+            total = num(linha.split(":", 1)[1])
+    return Fonte(caminho, "Relatório de inventário", itens, empresa, data_inv, total)
+
+
+def ler_fortes_fs(caminho, conteudo):
+    linhas = [l.rstrip("\r").split("|") for l in conteudo.splitlines() if "|" in l]
+    grupos, unidades, produtos, itens, empresa, data_inv = {}, {}, {}, [], {}, None
+    for c in linhas:
+        reg = c[0]
+        if reg == "CAB" and len(c) > 6:
+            empresa["nome"] = texto(c[4])
+            data_inv = data_ddmmaaaa(c[6])
+        elif reg == "GRP" and len(c) > 4:
+            grupos[c[1].lstrip("0")] = c[4]
+        elif reg == "UND" and len(c) > 2 and re.fullmatch(r"[A-Za-z0-9]{1,6}", c[1]):
+            unidades.setdefault(c[1].upper(), texto(c[2]))
+        elif reg == "PRO" and len(c) > 9:
+            produtos[c[1]] = c
+    for c in linhas:
+        if c[0] != "IIV" or len(c) < 9:
+            continue
+        p = produtos.get(c[3])
+        cod_proprio = texto(p[3]) if p and p[3].strip() else c[3]
+        item = Item(
+            codigo=cod_proprio, unidade=c[5], qtd=num(c[4]), vl_unit=num(c[6]),
+            ind_prop={"01": "0", "02": "1", "03": "2"}.get(c[7], "0"),
+            aliases={c[3]}, origem=f"IIV {c[3]}",
+        )
+        if p:
+            item.descricao, item.ncm = texto(p[2]), so_digitos(p[4])
+            item.unidade = item.unidade or p[5]
+            item.tipo = grupos.get(p[9].lstrip("0"), "")
+        data_inv = data_inv or data_ddmmaaaa(c[2])
+        itens.append(item)
+    if not itens:  # só cadastro: serve para completar
+        for p in produtos.values():
+            cod = texto(p[3]) if p[3].strip() else p[1]
+            itens.append(Item(codigo=cod, descricao=texto(p[2]), ncm=so_digitos(p[4]), unidade=p[5],
+                              tipo=grupos.get(p[9].lstrip("0"), ""), aliases={p[1]}))
+    return Fonte(caminho, "Fortes (.FS)", itens, empresa, data_inv, unidades=unidades)
+
+
+def ler_sped(caminho, conteudo):
+    itens, cadastro, empresa, data_inv, unidades, total = [], {}, {}, None, {}, None
+    for linha in conteudo.splitlines():
+        c = linha.strip().strip("|").split("|")
+        reg = c[0]
+        if reg == "0000" and len(c) >= 15:
+            empresa.update(nome=c[5], cnpj=c[6], uf=c[8], ie=c[9], cod_mun=c[10], im=c[11],
+                           perfil=c[13], ind_ativ=c[14])
+        elif reg == "0190" and len(c) >= 3:
+            unidades[c[1]] = c[2]
+        elif reg == "0200" and len(c) >= 8:
+            cadastro[c[1]] = c
+        elif reg == "H005" and len(c) >= 3 and not data_inv:
+            data_inv, total = data_ddmmaaaa(c[1]), num(c[2])
+        elif reg == "H010" and len(c) >= 7:
+            c += [""] * (11 - len(c))
+            itens.append(Item(codigo=c[1], unidade=c[2], qtd=num(c[3]), vl_unit=num(c[4]),
+                              vl_item=num(c[5]), ind_prop=c[6] or "0", cod_cta=c[9], origem="H010"))
+    for it in itens:
+        c = cadastro.get(it.codigo)
+        if c:
+            c += [""] * (13 - len(c))
+            it.descricao, it.cod_barra, it.tipo, it.ncm, it.cest = c[2], c[3], c[6], c[7], c[12]
+    if not itens:
+        for c in cadastro.values():
+            c += [""] * (13 - len(c))
+            itens.append(Item(codigo=c[1], descricao=c[2], unidade=c[5], tipo=c[6], ncm=c[7]))
+    return Fonte(caminho, "SPED / bloco H", itens, empresa, data_inv, total, unidades)
+
+
+# Cabeçalhos de planilha reconhecidos (sem acento, maiúsculo, por "contém")
+COLUNAS = [
+    ("codigo", ["COD. UTILIZADO", "CODIGO UTILIZADO", "COD UTILIZADO"]),
+    ("codigo_alt", ["COD. PRODUTO", "COD PRODUTO", "CODIGO DO PRODUTO"]),
+    ("codigo", ["CODIGO", "COD.", "COD ", "REFERENCIA"]),
+    ("descricao", ["DESCRI", "PRODUTO", "NOME"]),
+    ("unidade", ["UNIDADE", "UND", "UNID", "UN."]),
+    ("ncm", ["NCM", "CLASSIFICACAO"]),
+    ("cest", ["CEST"]),
+    ("cod_cta", ["CONTA"]),
+    ("qtd", ["QTD. NO ESTAB", "QUANTIDADE", "QTDE", "QTD"]),
+    ("qtd_terc", ["QTD. EM TERCEIROS", "QTD. FORA"]),
+    ("vl_unit", ["VALOR UNIT", "VL UNIT", "VL. UNIT", "CUSTO UNIT", "UNITARIO", "CUSTO"]),
+    ("vl_item", ["VALOR TOTAL", "VL TOTAL", "VL. TOTAL", "TOTAL"]),
+    ("icms_rec", ["ICMS"]),
+    ("tipo", ["TIPO"]),
+]
+
+
+def mapear_colunas(cab):
+    mapa = {}
+    nomes = [sem_acento(c).strip() for c in cab]
+    # Primeiro os nomes mais específicos; cada coluna só é usada uma vez
+    for chave, termos in COLUNAS:
+        if chave in mapa:
+            continue
+        for i, nome in enumerate(nomes):
+            if i in mapa.values() or not nome:
+                continue
+            if any(t in nome + " " for t in termos):
+                if chave == "qtd" and ("FORA" in nome or "TERCEIRO" in nome):
+                    continue
+                mapa[chave] = i
+                break
+    return mapa
+
+
+def linhas_planilha(caminho):
+    ext = caminho.suffix.lower()
+    if ext == ".csv":
+        txt = ler_texto(caminho)
+        sep = ";" if txt.count(";") >= txt.count(",") else ","
+        return [list(r) for r in csv.reader(txt.splitlines(), delimiter=sep)]
+    if ext in (".xlsx", ".xlsm"):
+        import openpyxl
+        wb = openpyxl.load_workbook(caminho, read_only=True, data_only=True)
+        return [["" if v is None else v for v in r] for r in wb.worksheets[0].iter_rows(values_only=True)]
+    import xlrd
+    wb = xlrd.open_workbook(caminho, logfile=open("nul" if sys.platform == "win32" else "/dev/null", "w"))
+    sh = wb.sheet_by_index(0)
+    return [[sh.cell_value(r, c) for c in range(sh.ncols)] for r in range(sh.nrows)]
+
+
+def ler_planilha(caminho):
+    linhas = linhas_planilha(caminho)
+    ini = next((i for i, l in enumerate(linhas[:30]) if len(mapear_colunas(l)) >= 3 and "codigo" in mapear_colunas(l)), None)
+    if ini is None:
+        raise ValueError("não achei a linha de cabeçalho (Código, Descrição, Quantidade...)")
+    mapa = mapear_colunas(linhas[ini])
+    pega = lambda l, k: l[mapa[k]] if k in mapa and mapa[k] < len(l) else ""
+    itens = []
+    for l in linhas[ini + 1:]:
+        cod = cod_texto(pega(l, "codigo")) or cod_texto(pega(l, "codigo_alt"))
+        if not cod:
+            continue
+        it = Item(
+            codigo=cod, descricao=texto(pega(l, "descricao")), unidade=texto(pega(l, "unidade")).upper(),
+            ncm=so_digitos(pega(l, "ncm")), cest=so_digitos(pega(l, "cest")), cod_cta=cod_texto(pega(l, "cod_cta")),
+            qtd=num(pega(l, "qtd")), vl_unit=num(pega(l, "vl_unit")), vl_item=num(pega(l, "vl_item")),
+            icms_rec=num(pega(l, "icms_rec")), tipo=so_digitos(pega(l, "tipo")).zfill(2) if so_digitos(pega(l, "tipo")) else "",
+            origem=f"linha {linhas.index(l) + 1}",
+        )
+        alt = cod_texto(pega(l, "codigo_alt"))
+        if alt and alt != cod:
+            it.aliases.add(alt)
+        terc = num(pega(l, "qtd_terc"))
+        if terc:
+            it.origem += f" (qtd em terceiros/fora: {terc})"
+        itens.append(it)
+    # Planilha com quantidade e valor zerados em tudo é só cadastro
+    if all(not i.qtd and not i.vl_unit and not i.vl_item for i in itens):
+        for i in itens:
+            i.qtd = i.vl_unit = i.vl_item = None
+    return Fonte(caminho, "Planilha", itens)
+
+
+def ler_arquivo(caminho):
+    ext = caminho.suffix.lower()
+    if ext in (".xls", ".xlsx", ".xlsm", ".csv"):
+        return ler_planilha(caminho)
+    conteudo = ler_texto(caminho)
+    if re.search(r"^CAB\|", conteudo, re.M) and re.search(r"^(PRO|IIV)\|", conteudo, re.M):
+        return ler_fortes_fs(caminho, conteudo)
+    if re.search(r"^\|(H010|0200|0000)\|", conteudo, re.M):
+        return ler_sped(caminho, conteudo)
+    if "Registro de Invent" in conteudo or RE_LINHA_INV.search(conteudo):
+        return ler_relatorio_inventario(caminho, conteudo)
+    raise ValueError("formato não reconhecido")
+
+
+# ---------------------------------------------------------------- montagem
+
+def consultar_cnpj(cnpj):
+    req = urllib.request.Request(f"https://brasilapi.com.br/api/cnpj/v1/{cnpj}", headers={"User-Agent": "gerar-sped"})
+    with urllib.request.urlopen(req, timeout=20) as r:
+        d = json.load(r)
+    endereco = " ".join(x for x in (d.get("descricao_tipo_de_logradouro"), d.get("logradouro")) if x)
+    return {
+        "nome": d.get("razao_social", ""), "fantasia": d.get("nome_fantasia") or "", "uf": d.get("uf", ""),
+        "cod_mun": str(d.get("codigo_municipio_ibge") or ""), "cep": so_digitos(d.get("cep")),
+        "end": endereco, "num": d.get("numero") or "", "compl": d.get("complemento") or "",
+        "bairro": d.get("bairro") or "", "fone": so_digitos(d.get("ddd_telefone_1"))[:11],
+        "email": (d.get("email") or "").lower(),
+    }
+
+
+def carregar_json(caminho):
+    if not caminho.exists():
+        return {}
+    try:  # utf-8-sig: aceita o arquivo salvo pelo Bloco de Notas
+        return json.loads(caminho.read_text(encoding="utf-8-sig"))
+    except json.JSONDecodeError as e:
+        raise ErroConversao(f"{caminho.name} está com erro de digitação (linha {e.lineno}); corrija ou apague o arquivo.")
+
+
+def dados_empresa(fontes, args, pendencias):
+    """Prioridade: linha de comando > arquivo > empresas.json/consulta do CNPJ.
+    O nome empresarial prefere a razão social do cadastro ao nome impresso no relatório."""
+    do_arquivo = {}
+    for f in reversed(fontes):
+        do_arquivo.update({k: v for k, v in f.empresa.items() if v})
+    da_linha = {k: getattr(args, k) for k in ("cnpj", "ie", "uf", "cod_mun", "nome", "fantasia", "perfil", "ind_ativ", "im")
+                if getattr(args, k, None)}
+    emp = {**do_arquivo, **da_linha}
+    emp["cnpj"] = so_digitos(emp.get("cnpj"))
+    emp["ie"] = so_digitos(emp.get("ie")) or texto(emp.get("ie"))
+    cnpj = emp["cnpj"]
+    if not cnpj:
+        pendencias.append(("empresa", "", "CNPJ não encontrado no arquivo"))
+    elif not cnpj_valido(cnpj):
+        pendencias.append(("empresa", cnpj, "CNPJ com dígito verificador inválido"))
+
+    cadastro = carregar_json(CADASTRO_EMPRESAS)
+    salvo = cadastro.get(cnpj, {})
+    faltando = not all(salvo.get(k) for k in ("uf", "cod_mun", "cep"))
+    if cnpj and faltando and not args.sem_consulta:
+        try:
+            salvo = {**consultar_cnpj(cnpj), **{k: v for k, v in salvo.items() if v}}
+            cadastro[cnpj] = salvo
+            CADASTRO_EMPRESAS.write_text(json.dumps(cadastro, ensure_ascii=False, indent=2), encoding="utf-8")
+        except Exception as e:
+            pendencias.append(("empresa", cnpj, f"consulta do CNPJ falhou ({e}): preencha UF, município e endereço"))
+    for k, v in salvo.items():
+        if v and (not emp.get(k) or (k == "nome" and "nome" not in da_linha)):
+            emp[k] = v
+    if not emp.get("fantasia"):
+        emp["fantasia"] = do_arquivo.get("nome") or emp.get("nome", "")
+    emp.setdefault("perfil", args.perfil_padrao)
+    emp.setdefault("ind_ativ", args.ind_ativ_padrao)
+    for k, msg in (("uf", "UF"), ("cod_mun", "código IBGE do município"), ("ie", "inscrição estadual"), ("nome", "nome empresarial")):
+        if not emp.get(k):
+            pendencias.append(("empresa", cnpj, f"falta {msg}"))
+    return emp
+
+
+def complementar(principal, extras, pendencias, codigos_gerados):
+    indice = {}
+    for f in extras:
+        for it in f.itens:
+            for c in {it.codigo, *it.aliases}:
+                indice.setdefault(c.upper(), it)
+
+    finais, por_codigo = [], {}
+    for it in principal.itens:
+        ref = indice.get(it.codigo.upper()) or next((indice[a.upper()] for a in it.aliases if a.upper() in indice), None)
+        if ref:
+            for campo in ("descricao", "ncm", "unidade", "tipo", "cod_cta", "cest", "cod_barra"):
+                if not getattr(it, campo) and getattr(ref, campo):
+                    setattr(it, campo, getattr(ref, campo))
+            if it.vl_unit is None and it.vl_item is None and ref.vl_unit is not None:
+                it.vl_unit = ref.vl_unit
+                pendencias.append(("item", it.codigo, f"valor unitário veio de {ref.origem or 'outro arquivo'}: {fmt(ref.vl_unit, 6)}"))
+
+        if not it.codigo:
+            codigos_gerados[0] += 1
+            it.codigo = f"SEMCOD{codigos_gerados[0]:04d}"
+            pendencias.append(("item", it.codigo, f"linha sem código no arquivo, código gerado: \"{it.origem}\""))
+
+        if it.qtd is None:
+            pendencias.append(("item", it.codigo, "sem quantidade: item fora do arquivo"))
+            continue
+        if it.vl_item is None and it.vl_unit is None:
+            pendencias.append(("item", it.codigo, "sem valor unitário: item fora do arquivo"))
+            continue
+        if it.qtd < 0 or (it.vl_item or 0) < 0:
+            pendencias.append(("item", it.codigo, "quantidade ou valor negativo: item fora do arquivo"))
+            continue
+        if it.qtd == 0:
+            pendencias.append(("item", it.codigo, "quantidade zero: item fora do arquivo"))
+            continue
+        if it.vl_item is None:
+            it.vl_item = (it.qtd * it.vl_unit).quantize(DOIS, ROUND_HALF_UP)
+        if it.vl_unit is None:
+            it.vl_unit = it.vl_item / it.qtd
+
+        chave = (it.codigo.upper(), it.ind_prop)
+        igual = por_codigo.get(chave)
+        if igual and texto(igual.descricao).upper() == texto(it.descricao).upper() and igual.unidade.upper() == it.unidade.upper():
+            igual.qtd += it.qtd
+            igual.vl_item += it.vl_item
+            igual.vl_unit = igual.vl_item / igual.qtd
+            pendencias.append(("item", it.codigo, "código repetido com a mesma descrição: quantidades somadas"))
+            continue
+        if igual:
+            n = 2
+            while (f"{it.codigo}-{n}".upper(), it.ind_prop) in por_codigo:
+                n += 1
+            pendencias.append(("item", f"{it.codigo}-{n}", f"código {it.codigo} repetido com outra descrição (\"{it.descricao}\"): renomeado"))
+            it.codigo = f"{it.codigo}-{n}"
+            chave = (it.codigo.upper(), it.ind_prop)
+        por_codigo[chave] = it
+        finais.append(it)
+
+    for it in finais:
+        it.codigo = texto(it.codigo, 60)
+        it.unidade = texto(it.unidade, 6).upper() or "UN"
+        if not it.descricao:
+            it.descricao = f"ITEM {it.codigo}"
+            pendencias.append(("item", it.codigo, "sem descrição em nenhum arquivo: usado o próprio código"))
+        if it.ncm and len(it.ncm) != 8:
+            pendencias.append(("item", it.codigo, f"NCM \"{it.ncm}\" não tem 8 dígitos: campo deixado em branco"))
+            it.ncm = ""
+        if it.ind_prop in ("1", "2"):
+            pendencias.append(("item", it.codigo, "item com terceiros: o H010 exige COD_PART (registro 0150), não informado"))
+    return finais
+
+
+def montar_sped(emp, itens, unidades_desc, data_inv, ini, fim, args, escritorio):
+    reg = []
+    add = lambda *campos: reg.append("|" + "|".join(str(c) for c in campos) + "|")
+
+    ano = fim.year
+    cod_ver = args.cod_ver or VERSAO_LEIAUTE.get(ano, max(VERSAO_LEIAUTE.values()))
+    d = lambda x: x.strftime("%d%m%Y")
+    # 0000: 15 campos, vazios mantidos na posição (CPF, IM, SUFRAMA)
+    add("0000", cod_ver, args.cod_fin, d(ini), d(fim), texto(emp.get("nome"), 100), emp.get("cnpj", ""), "",
+        texto(emp.get("uf"), 2).upper(), texto(emp.get("ie"), 14), so_digitos(emp.get("cod_mun")),
+        texto(emp.get("im")), "", emp.get("perfil", "A"), emp.get("ind_ativ", "1"))
+    add("0001", "0")
+    if emp.get("ind_ativ") == "0":
+        add("0002", args.clas_estab_ind)
+    add("0005", texto(emp.get("fantasia") or emp.get("nome"), 60), so_digitos(emp.get("cep")),
+        texto(emp.get("end"), 60), texto(emp.get("num"), 10), texto(emp.get("compl"), 60),
+        texto(emp.get("bairro"), 60), so_digitos(emp.get("fone"))[:11], "", texto(emp.get("email")))
+    if escritorio:
+        e = escritorio
+        add("0100", texto(e.get("nome"), 100), so_digitos(e.get("cpf")), texto(e.get("crc"), 15),
+            so_digitos(e.get("cnpj")), so_digitos(e.get("cep")), texto(e.get("end"), 60), texto(e.get("num"), 10),
+            texto(e.get("compl"), 60), texto(e.get("bairro"), 60), so_digitos(e.get("fone"))[:11], "",
+            texto(e.get("email")), so_digitos(e.get("cod_mun")))
+    for un in sorted({i.unidade for i in itens}):
+        add("0190", un, texto(unidades_desc.get(un) or UNIDADES.get(un) or un))
+    tipo_padrao = args.tipo_item
+    for it in itens:
+        add("0200", it.codigo, texto(it.descricao), texto(it.cod_barra), "", it.unidade,
+            (it.tipo or tipo_padrao).zfill(2), it.ncm, "", "", "", "", it.cest if len(it.cest) == 7 else "")
+    add("0990", len(reg) + 1)
+
+    for blc in ("B", "C", "D"):
+        add(f"{blc}001", "1")
+        add(f"{blc}990", "2")
+    # E100/E110 são obrigatórios em todo arquivo; sem movimento, apuração zerada
+    add("E001", "0")
+    add("E100", d(ini), d(fim))
+    add("E110", *(["0"] * 14))
+    add("E990", "4")
+    add("G001", "1")
+    add("G990", "2")
+
+    h_ini = len(reg)
+    total = sum((it.vl_item.quantize(DOIS, ROUND_HALF_UP) for it in itens), Decimal(0))
+    add("H001", "0" if itens else "1")
+    if itens:
+        add("H005", d(data_inv), fmt(total, 2), args.mot_inv)
+        for it in itens:
+            vl_item = it.vl_item.quantize(DOIS, ROUND_HALF_UP)
+            vl_ir = vl_item - (it.icms_rec or 0)
+            add("H010", it.codigo, it.unidade, fmt(it.qtd, 3), fmt(it.vl_unit, 6), fmt(vl_item, 2),
+                it.ind_prop, "", "", texto(it.cod_cta), fmt(vl_ir, 2))
+    add("H990", len(reg) - h_ini + 1)
+
+    add("K001", "1")
+    add("K990", "2")
+    add("1001", "0")
+    add("1010", *(["N"] * 13))
+    add("1990", "3")
+
+    contagem = {}
+    for linha in reg:
+        r = linha[1:5]
+        contagem[r] = contagem.get(r, 0) + 1
+    tipos = list(contagem) + ["9001", "9900", "9990", "9999"]
+    qtd_9900 = len(tipos)
+    contagem.update({"9001": 1, "9900": qtd_9900, "9990": 1, "9999": 1})
+    add("9001", "0")
+    for r in tipos:
+        add("9900", r, contagem[r])
+    add("9990", qtd_9900 + 3)
+    add("9999", len(reg) + 1)
+    return reg, total
+
+
+def periodo(args, data_inv):
+    if args.periodo:
+        mes, ano = (int(x) for x in re.split(r"[/\-.]", args.periodo))
+    else:
+        mes, ano = data_inv.month, data_inv.year
+    ini = date(ano, mes, 1)
+    return ini, date(ano, mes, calendar.monthrange(ano, mes)[1])
+
+
+class ErroConversao(Exception):
+    pass
+
+
+@dataclass
+class Resultado:
+    principal: Fonte
+    emp: dict
+    itens: list
+    pendencias: list
+    registros: list
+    total: Decimal
+    data_inv: date
+    ini: date
+    fim: date
+
+    @property
+    def base(self):
+        return f"SPED_{self.emp.get('cnpj') or self.principal.caminho.stem}_{self.data_inv:%d%m%Y}"
+
+
+def converter(principal, extras, args):
+    pendencias, gerados = [], [0]
+    data_inv = data_ddmmaaaa(args.data_inv) if args.data_inv else principal.data_inv
+    if not data_inv:
+        for f in extras:
+            data_inv = data_inv or f.data_inv
+    if not data_inv:
+        raise ErroConversao("Data do inventário não encontrada: informe a data (ex.: 31/12/2025).")
+
+    emp = dados_empresa([principal, *extras], args, pendencias)
+    itens = complementar(principal, extras, pendencias, gerados)
+    unidades = {}
+    for f in [*extras, principal]:
+        unidades.update(f.unidades)
+    ini, fim = periodo(args, data_inv)
+    if data_inv > fim:
+        raise ErroConversao(f"A data do inventário ({data_inv:%d/%m/%Y}) é depois do fim do período ({fim:%d/%m/%Y}).")
+    escritorio = carregar_json(ESCRITORIO)
+    if not (escritorio.get("nome") and escritorio.get("cpf")):
+        escritorio = {}
+        pendencias.append(("arquivo", "0100", "dados do escritório não cadastrados: registro 0100 (contabilista) não gerado"))
+
+    reg, total = montar_sped(emp, itens, unidades, data_inv, ini, fim, args, escritorio)
+
+    if principal.total_declarado is not None:
+        dif = total - principal.total_declarado
+        if dif:
+            pendencias.append(("total", "", f"total gerado {fmt(total, 2)} difere do total do arquivo {fmt(principal.total_declarado, 2)} em {fmt(dif, 2)}"))
+    return Resultado(principal, emp, itens, pendencias, reg, total, data_inv, ini, fim)
+
+
+def gravar(res, pasta):
+    pasta = Path(pasta)
+    pasta.mkdir(parents=True, exist_ok=True)
+    arq = pasta / f"{res.base}.txt"
+    with open(arq, "w", encoding="latin-1", errors="replace", newline="\r\n") as fp:
+        fp.write("\n".join(res.registros) + "\n")
+    arq_pend = pasta / f"{res.base}_pendencias.csv"
+    if res.pendencias:
+        with open(arq_pend, "w", encoding="utf-8-sig", newline="") as fp:
+            w = csv.writer(fp, delimiter=";")
+            w.writerow(["tipo", "codigo", "pendencia"])
+            w.writerows(res.pendencias)
+    elif arq_pend.exists():
+        arq_pend.unlink()
+    return arq, arq_pend
+
+
+def processar(principal, extras, args):
+    try:
+        res = converter(principal, extras, args)
+    except ErroConversao as e:
+        raise SystemExit(str(e))
+    arq, arq_pend = gravar(res, args.saida or DADOS / "saida")
+    emp = res.emp
+    print(f"\n{principal.caminho.name}  ->  {arq}")
+    print(f"  empresa: {emp.get('nome') or '?'}  CNPJ {emp.get('cnpj') or '?'}  IE {emp.get('ie') or '?'}  UF {emp.get('uf') or '?'}")
+    print(f"  inventário em {res.data_inv:%d/%m/%Y}, período {res.ini:%d/%m/%Y} a {res.fim:%d/%m/%Y}, leiaute {res.registros[0].split('|')[2]}")
+    print(f"  {len(res.itens)} itens, total {fmt(res.total, 2)}, {len(res.registros)} linhas")
+    if principal.total_declarado is not None:
+        print(f"  total no arquivo de origem: {fmt(principal.total_declarado, 2)}")
+    if res.pendencias:
+        print(f"  {len(res.pendencias)} pendências em {arq_pend.name}")
+    return arq
+
+
+def escolher_principal(fontes):
+    com_qtd = [f for f in fontes if any(i.qtd is not None for i in f.itens)]
+    return next((f for f in com_qtd if f.tem_valores), com_qtd[0] if com_qtd else fontes[0])
+
+
+def criar_parser():
+    ap = argparse.ArgumentParser(description="Gera o SPED Fiscal (EFD ICMS/IPI) com o inventário no bloco H.")
+    ap.add_argument("arquivos", nargs="+", help="inventário e arquivos de apoio (relatório, .FS, bloco H, planilhas)")
+    ap.add_argument("--separado", action="store_true", help="um SPED por arquivo, sem cruzar os dados")
+    ap.add_argument("--saida", help="pasta de saída (padrão: ./saida)")
+    ap.add_argument("--data-inv", help="data do inventário, se o arquivo não trouxer (dd/mm/aaaa)")
+    ap.add_argument("--periodo", help="mês do arquivo (mm/aaaa); padrão: mês do inventário")
+    ap.add_argument("--cnpj"), ap.add_argument("--ie"), ap.add_argument("--uf"), ap.add_argument("--im")
+    ap.add_argument("--cod-mun", help="código IBGE do município (7 dígitos)")
+    ap.add_argument("--nome", help="nome empresarial")
+    ap.add_argument("--fantasia")
+    ap.add_argument("--perfil", choices=["A", "B", "C"])
+    ap.add_argument("--perfil-padrao", default="A", help=argparse.SUPPRESS)
+    ap.add_argument("--ind-ativ", choices=["0", "1"], help="0 industrial, 1 outros")
+    ap.add_argument("--ind-ativ-padrao", default="1", help=argparse.SUPPRESS)
+    ap.add_argument("--clas-estab-ind", default="00", help="registro 0002 (só se --ind-ativ 0)")
+    ap.add_argument("--tipo-item", default="00", help="TIPO_ITEM quando o arquivo não informa (padrão 00 revenda)")
+    ap.add_argument("--mot-inv", default="01", choices=["01", "02", "03", "04", "05", "06"])
+    ap.add_argument("--cod-fin", default="0", choices=["0", "1"])
+    ap.add_argument("--cod-ver", help="força o código da versão do leiaute")
+    ap.add_argument("--sem-consulta", action="store_true", help="não consulta o CNPJ na internet")
+    return ap
+
+
+def opcoes(**valores):
+    """Opções com os mesmos padrões da linha de comando (para o painel)."""
+    args = criar_parser().parse_args(["-"])
+    for k, v in valores.items():
+        setattr(args, k, v)
+    return args
+
+
+def main():
+    if sys.stdout:  # pythonw roda sem console
+        sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+    args = criar_parser().parse_args()
+
+    fontes = []
+    for a in args.arquivos:
+        p = Path(a)
+        try:
+            f = ler_arquivo(p)
+        except Exception as e:
+            print(f"{p.name}: não foi possível ler ({e})")
+            continue
+        print(f"{p.name}: {f.tipo}, {len(f.itens)} itens{'' if f.tem_valores else ' (sem valores)'}")
+        fontes.append(f)
+    if not fontes:
+        raise SystemExit("Nenhum arquivo lido.")
+
+    if args.separado:
+        for f in fontes:
+            processar(f, [], args)
+        return
+    principal = escolher_principal(fontes)
+    processar(principal, [f for f in fontes if f is not principal], args)
+
+
+if __name__ == "__main__":
+    main()
