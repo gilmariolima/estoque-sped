@@ -86,8 +86,15 @@ class Fonte:
 
 # ---------------------------------------------------------------- utilidades
 
-def num(txt):
-    """Converte '1.234,56', '1234.5600', 1234.5 ou '' em Decimal (ou None)."""
+RE_MILHAR = re.compile(r"-?\d{1,3}(\.\d{3})+")
+
+
+def num(txt, br=False):
+    """Converte '1.234,56', '1234.5600', 1234.5 ou '' em Decimal (ou None).
+
+    Sem vírgula, o ponto é decimal ("2.5"), a não ser que seja claramente milhar
+    ("1.234.567") ou que o arquivo use vírgula decimal (br=True): aí "1.234" é mil e
+    duzentos e trinta e quatro."""
     if txt is None:
         return None
     if isinstance(txt, (int, float)):
@@ -95,7 +102,7 @@ def num(txt):
     t = str(txt).strip().replace(" ", "")
     if not t or t in "-":
         return None
-    if "," in t:
+    if "," in t or (br and RE_MILHAR.fullmatch(t)) or (t.count(".") > 1 and RE_MILHAR.fullmatch(t)):
         t = t.replace(".", "").replace(",", ".")
     try:
         return Decimal(t)
@@ -141,12 +148,16 @@ def ler_texto(caminho):
 
 
 def data_ddmmaaaa(txt):
+    """'31/12/2025', '31122025' ou '20251231' em date; data inexistente vira None."""
     d = so_digitos(txt)
-    if len(d) == 8:
+    if len(d) != 8:
+        return None
+    try:
         if int(d[:4]) > 1900 and int(d[4:6]) <= 12:  # aaaammdd
             return date(int(d[:4]), int(d[4:6]), int(d[6:]))
         return date(int(d[4:]), int(d[2:4]), int(d[:2]))
-    return None
+    except ValueError:  # 31/02, mês 13...
+        return None
 
 
 def cnpj_valido(c):
@@ -165,7 +176,8 @@ def cnpj_valido(c):
 
 RE_LINHA_INV = re.compile(
     r"^(?P<ncm>\d{2,8})\s+(?P<texto>.+?)\s{2,}(?P<un>\S{1,6})\s+(?P<qtd>-?[\d.]+,\d+)\s+"
-    r"(?P<unit>-?[\d.]+,\d+)\s+(?P<total>-?[\d.]+,\d+)\s*$"
+    r"(?P<unit>-?[\d.]+,\d+)\s+(?P<total>-?[\d.]+,\d+)\s*$",
+    re.M,  # a detecção procura em todo o arquivo, não só na primeira linha
 )
 
 
@@ -195,17 +207,18 @@ def ler_relatorio_inventario(caminho, conteudo):
                 origem=m["texto"],
             ))
             continue
-        if "Firma" in linha and ":" in linha and "nome" not in empresa:
-            empresa["nome"] = texto(linha.split(":", 1)[1])
-        elif "Insc. Est" in linha and "ie" not in empresa:
-            empresa["ie"] = so_digitos(linha.split(":", 1)[1].split("CNPJ")[0])
-            if "CNPJ" in linha:
-                empresa["cnpj"] = so_digitos(linha.split("CNPJ", 1)[1])
-        elif "Estoque existente em" in linha and not data_inv:
+        # Cabeçalho: o relatório sai em maiúsculas ou não, conforme o sistema do cliente
+        if "nome" not in empresa and (m := re.match(r"\s*Firma\b[^:]*:\s*(.+)", linha, re.I)):
+            empresa["nome"] = texto(re.split(r"\s{2,}", m[1].strip())[0])
+        if "ie" not in empresa and (m := re.search(r"Insc(?:ri[cç][aã]o)?\.?\s*Est[^:]*:\s*([\d./-]+)", linha, re.I)):
+            empresa["ie"] = so_digitos(m[1])
+        if "cnpj" not in empresa and (m := re.search(r"C\.?N\.?P\.?J\.?[^:\d]*:?\s*(\d[\d./-]{12,18}\d)", linha, re.I)):
+            empresa["cnpj"] = so_digitos(m[1])
+        if not data_inv and re.search(r"Estoque\s+existente\s+em", linha, re.I):
             m = re.search(r"(\d{2})/(\d{2})/(\d{4})", linha)
-            data_inv = date(int(m[3]), int(m[2]), int(m[1])) if m else None
-        elif linha.strip().startswith("Total:"):
-            total = num(linha.split(":", 1)[1])
+            data_inv = data_ddmmaaaa(m[0]) if m else None
+        elif re.match(r"\s*Total\s*:", linha, re.I):
+            total = num(linha.split(":", 1)[1], br=True)
     return Fonte(caminho, "Relatório de inventário", itens, empresa, data_inv, total)
 
 
@@ -283,7 +296,7 @@ COLUNAS = [
     ("codigo_alt", ["COD. PRODUTO", "COD PRODUTO", "CODIGO DO PRODUTO"]),
     ("codigo", ["CODIGO", "COD.", "COD ", "REFERENCIA"]),
     ("descricao", ["DESCRI", "PRODUTO", "NOME"]),
-    ("unidade", ["UNIDADE", "UND", "UNID", "UN."]),
+    ("unidade", ["UNIDADE", "UND", "UNID", "UN.", "UN "]),
     ("ncm", ["NCM", "CLASSIFICACAO"]),
     ("cest", ["CEST"]),
     ("cod_cta", ["CONTA"]),
@@ -296,19 +309,32 @@ COLUNAS = [
 ]
 
 
+# Palavras que tiram a coluna de um campo mesmo quando um termo dele aparece no nome:
+# "Custo Total" não é valor unitário, "Cód. Barras" e "Código NCM" não são o código do item.
+NAO_E = {
+    "codigo": ("BARRA", "EAN", "GTIN", "NCM", "CEST", "CONTA"),
+    "codigo_alt": ("BARRA", "EAN", "GTIN"),
+    "descricao": ("COD",),
+    "unidade": ("VALOR", "VL", "CUSTO", "QTD", "QUANT"),
+    "qtd": ("FORA", "TERCEIRO"),
+    "vl_unit": ("TOTAL",),
+    "vl_item": ("UNIT", "QTD", "QUANT"),
+}
+
+
 def mapear_colunas(cab):
+    """Cada campo fica com a coluna que casa com o termo MAIS específico dele (os termos
+    estão em ordem de preferência), não com a primeira coluna que casa com qualquer termo."""
     mapa = {}
-    nomes = [sem_acento(c).strip() for c in cab]
-    # Primeiro os nomes mais específicos; cada coluna só é usada uma vez
+    nomes = [sem_acento(c).strip() + " " for c in cab]
     for chave, termos in COLUNAS:
         if chave in mapa:
             continue
-        for i, nome in enumerate(nomes):
-            if i in mapa.values() or not nome:
-                continue
-            if any(t in nome + " " for t in termos):
-                if chave == "qtd" and ("FORA" in nome or "TERCEIRO" in nome):
-                    continue
+        for t in termos:
+            i = next((i for i, nome in enumerate(nomes)
+                      if nome.strip() and i not in mapa.values() and t in nome
+                      and not any(x in nome for x in NAO_E.get(chave, ()))), None)
+            if i is not None:
                 mapa[chave] = i
                 break
     return mapa
@@ -337,22 +363,28 @@ def ler_planilha(caminho):
         raise ValueError("não achei a linha de cabeçalho (Código, Descrição, Quantidade...)")
     mapa = mapear_colunas(linhas[ini])
     pega = lambda l, k: l[mapa[k]] if k in mapa and mapa[k] < len(l) else ""
+    # Planilha com vírgula decimal (CSV brasileiro, texto no Excel): aí "1.234" é milhar
+    numericas = [mapa[k] for k in ("qtd", "qtd_terc", "vl_unit", "vl_item", "icms_rec") if k in mapa]
+    br = any(isinstance(l[c], str) and re.search(r"\d,\d", l[c])
+             for l in linhas[ini + 1:] for c in numericas if c < len(l))
+    n = lambda l, k: num(pega(l, k), br)
     itens = []
-    for l in linhas[ini + 1:]:
+    for nlinha, l in enumerate(linhas[ini + 1:], start=ini + 2):
         cod = cod_texto(pega(l, "codigo")) or cod_texto(pega(l, "codigo_alt"))
         if not cod:
             continue
+        tipo = so_digitos(pega(l, "tipo"))
         it = Item(
             codigo=cod, descricao=texto(pega(l, "descricao")), unidade=texto(pega(l, "unidade")).upper(),
             ncm=so_digitos(pega(l, "ncm")), cest=so_digitos(pega(l, "cest")), cod_cta=cod_texto(pega(l, "cod_cta")),
-            qtd=num(pega(l, "qtd")), vl_unit=num(pega(l, "vl_unit")), vl_item=num(pega(l, "vl_item")),
-            icms_rec=num(pega(l, "icms_rec")), tipo=so_digitos(pega(l, "tipo")).zfill(2) if so_digitos(pega(l, "tipo")) else "",
-            origem=f"linha {linhas.index(l) + 1}",
+            qtd=n(l, "qtd"), vl_unit=n(l, "vl_unit"), vl_item=n(l, "vl_item"),
+            icms_rec=n(l, "icms_rec"), tipo=tipo.zfill(2) if tipo else "",
+            origem=f"linha {nlinha}",
         )
         alt = cod_texto(pega(l, "codigo_alt"))
         if alt and alt != cod:
             it.aliases.add(alt)
-        terc = num(pega(l, "qtd_terc"))
+        terc = n(l, "qtd_terc")
         if terc:
             it.origem += f" (qtd em terceiros/fora: {terc})"
         itens.append(it)
@@ -372,7 +404,7 @@ def ler_arquivo(caminho):
         return ler_fortes_fs(caminho, conteudo)
     if re.search(r"^\|(H010|0200|0000)\|", conteudo, re.M):
         return ler_sped(caminho, conteudo)
-    if "Registro de Invent" in conteudo or RE_LINHA_INV.search(conteudo):
+    if "REGISTRO DE INVENT" in sem_acento(conteudo[:20000]) or RE_LINHA_INV.search(conteudo):
         return ler_relatorio_inventario(caminho, conteudo)
     raise ValueError("formato não reconhecido")
 
@@ -426,6 +458,7 @@ def dados_empresa(fontes, args, pendencias):
         try:
             salvo = {**consultar_cnpj(cnpj), **{k: v for k, v in salvo.items() if v}}
             cadastro[cnpj] = salvo
+            DADOS.mkdir(parents=True, exist_ok=True)
             CADASTRO_EMPRESAS.write_text(json.dumps(cadastro, ensure_ascii=False, indent=2), encoding="utf-8")
         except Exception as e:
             pendencias.append(("empresa", cnpj, f"consulta do CNPJ falhou ({e}): preencha UF, município e endereço"))
@@ -449,7 +482,7 @@ def complementar(principal, extras, pendencias, codigos_gerados):
             for c in {it.codigo, *it.aliases}:
                 indice.setdefault(c.upper(), it)
 
-    finais, por_codigo = [], {}
+    finais, por_codigo, cadastro = [], {}, {}  # cadastro: código -> item que define o 0200
     for it in principal.itens:
         ref = indice.get(it.codigo.upper()) or next((indice[a.upper()] for a in it.aliases if a.upper() in indice), None)
         if ref:
@@ -464,6 +497,10 @@ def complementar(principal, extras, pendencias, codigos_gerados):
             codigos_gerados[0] += 1
             it.codigo = f"SEMCOD{codigos_gerados[0]:04d}"
             pendencias.append(("item", it.codigo, f"linha sem código no arquivo, código gerado: \"{it.origem}\""))
+        # Tamanhos do leiaute antes de comparar códigos: dois códigos longos que só
+        # diferem depois do 60º caractere viram o mesmo código no arquivo
+        it.codigo = texto(it.codigo, 60)
+        it.unidade = texto(it.unidade, 6).upper() or "UN"
 
         if it.qtd is None:
             pendencias.append(("item", it.codigo, "sem quantidade: item fora do arquivo"))
@@ -471,7 +508,7 @@ def complementar(principal, extras, pendencias, codigos_gerados):
         if it.vl_item is None and it.vl_unit is None:
             pendencias.append(("item", it.codigo, "sem valor unitário: item fora do arquivo"))
             continue
-        if it.qtd < 0 or (it.vl_item or 0) < 0:
+        if it.qtd < 0 or (it.vl_item or 0) < 0 or (it.vl_unit or 0) < 0:
             pendencias.append(("item", it.codigo, "quantidade ou valor negativo: item fora do arquivo"))
             continue
         if it.qtd == 0:
@@ -482,27 +519,31 @@ def complementar(principal, extras, pendencias, codigos_gerados):
         if it.vl_unit is None:
             it.vl_unit = it.vl_item / it.qtd
 
+        # O mesmo item pode estar em poder do informante e de terceiros (um H010 para cada
+        # IND_PROP), mas o cadastro 0200 é um só por código: descrição e unidade têm de bater.
+        cad = cadastro.get(it.codigo.upper())
+        if cad and not (texto(cad.descricao).upper() == texto(it.descricao).upper() and cad.unidade == it.unidade):
+            n = 2
+            while f"{it.codigo[:56]}-{n}".upper() in cadastro:
+                n += 1
+            novo = f"{it.codigo[:56]}-{n}"
+            pendencias.append(("item", novo, f"código {it.codigo} repetido com outra descrição ou unidade (\"{it.descricao}\"): renomeado"))
+            it.codigo = novo
+        elif cad:
+            it.codigo = cad.codigo  # "abc" e "ABC": o H010 usa o código exato do 0200
         chave = (it.codigo.upper(), it.ind_prop)
         igual = por_codigo.get(chave)
-        if igual and texto(igual.descricao).upper() == texto(it.descricao).upper() and igual.unidade.upper() == it.unidade.upper():
+        if igual:
             igual.qtd += it.qtd
             igual.vl_item += it.vl_item
             igual.vl_unit = igual.vl_item / igual.qtd
             pendencias.append(("item", it.codigo, "código repetido com a mesma descrição: quantidades somadas"))
             continue
-        if igual:
-            n = 2
-            while (f"{it.codigo}-{n}".upper(), it.ind_prop) in por_codigo:
-                n += 1
-            pendencias.append(("item", f"{it.codigo}-{n}", f"código {it.codigo} repetido com outra descrição (\"{it.descricao}\"): renomeado"))
-            it.codigo = f"{it.codigo}-{n}"
-            chave = (it.codigo.upper(), it.ind_prop)
+        cadastro.setdefault(it.codigo.upper(), it)
         por_codigo[chave] = it
         finais.append(it)
 
     for it in finais:
-        it.codigo = texto(it.codigo, 60)
-        it.unidade = texto(it.unidade, 6).upper() or "UN"
         if not it.descricao:
             it.descricao = f"ITEM {it.codigo}"
             pendencias.append(("item", it.codigo, "sem descrição em nenhum arquivo: usado o próprio código"))
@@ -540,7 +581,11 @@ def montar_sped(emp, itens, unidades_desc, data_inv, ini, fim, args, escritorio)
     for un in sorted({i.unidade for i in itens}):
         add("0190", un, texto(unidades_desc.get(un) or UNIDADES.get(un) or un))
     tipo_padrao = args.tipo_item
+    vistos = set()
     for it in itens:
+        if it.codigo.upper() in vistos:  # mesmo item em poder de terceiros: um 0200 só
+            continue
+        vistos.add(it.codigo.upper())
         add("0200", it.codigo, texto(it.descricao), texto(it.cod_barra), "", it.unidade,
             (it.tipo or tipo_padrao).zfill(2), it.ncm, "", "", "", "", it.cest if len(it.cest) == 7 else "")
     add("0990", len(reg) + 1)
@@ -591,7 +636,10 @@ def montar_sped(emp, itens, unidades_desc, data_inv, ini, fim, args, escritorio)
 
 def periodo(args, data_inv):
     if args.periodo:
-        mes, ano = (int(x) for x in re.split(r"[/\-.]", args.periodo))
+        m = re.fullmatch(r"\s*(\d{1,2})\s*[/\-.]\s*(\d{4})\s*", args.periodo)
+        if not m or not 1 <= int(m[1]) <= 12:
+            raise ErroConversao(f"Período \"{args.periodo}\" inválido: use mês/ano, por exemplo 02/2026.")
+        mes, ano = int(m[1]), int(m[2])
     else:
         mes, ano = data_inv.month, data_inv.year
     ini = date(ano, mes, 1)
@@ -621,7 +669,12 @@ class Resultado:
 
 def converter(principal, extras, args):
     pendencias, gerados = [], [0]
-    data_inv = data_ddmmaaaa(args.data_inv) if args.data_inv else principal.data_inv
+    if args.data_inv:
+        data_inv = data_ddmmaaaa(args.data_inv)
+        if not data_inv:
+            raise ErroConversao(f"Data do inventário \"{args.data_inv}\" inválida: use dia/mês/ano, por exemplo 31/12/2025.")
+    else:
+        data_inv = principal.data_inv
     if not data_inv:
         for f in extras:
             data_inv = data_inv or f.data_inv

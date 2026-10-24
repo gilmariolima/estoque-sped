@@ -1,6 +1,12 @@
-"""Painel local do conversor de inventário: http://127.0.0.1:8765"""
+"""Painel local do conversor de inventário: http://127.0.0.1:8765
 
+No app desktop a porta é escolhida na hora (--porta 0) e o painel avisa qual é numa linha
+"PORTA=<n>" na saída padrão, que o Electron lê para abrir a janela.
+"""
+
+import argparse
 import hashlib
+import subprocess
 import json
 import os
 import re
@@ -17,7 +23,8 @@ from urllib.parse import parse_qs, quote, unquote, urlparse
 
 import gerar_sped as gs
 
-PORTA = 8765
+PORTA = 8765  # padrão quando roda fora do app desktop
+LIMITE_ENVIO = 300 * 1024 * 1024  # arquivo do cliente maior que isso não é inventário
 PASTA = Path(__file__).resolve().parent
 WEB = PASTA / "painel"
 SAIDA = gs.DADOS / "saida"
@@ -72,7 +79,7 @@ def converter(dados):
     escolhido = dados.get("principal")
     principal = next((f for f in fontes if f.caminho.name == escolhido), None) or gs.escolher_principal(fontes)
     extras = [f for f in fontes if f is not principal]
-    campos = {k: (v or "").strip() for k, v in (dados.get("campos") or {}).items()}
+    campos = {k: str(v if v is not None else "").strip() for k, v in (dados.get("campos") or {}).items()}
 
     args = gs.opcoes(
         cnpj=campos.get("cnpj") or None, ie=campos.get("ie") or None, uf=(campos.get("uf") or "").upper() or None,
@@ -140,7 +147,9 @@ def gerados():
             for linha in fp:
                 c = linha.rstrip("\r\n").split("|")
                 info["linhas"] += 1
-                if c[1] == "0000":
+                if len(c) < 4:  # linha em branco ou arquivo mexido à mão
+                    continue
+                if c[1] == "0000" and len(c) > 7:
                     info["nome"], info["cnpj"] = c[6], c[7]
                 elif c[1] == "H005":
                     info["inventario"] = f"{c[2][:2]}/{c[2][2:4]}/{c[2][4:]}"
@@ -176,9 +185,30 @@ class Painel(BaseHTTPRequestHandler):
 
     def corpo(self):
         tam = int(self.headers.get("Content-Length") or 0)
+        if tam > LIMITE_ENVIO:
+            raise ValueError("arquivo grande demais")
         return self.rfile.read(tam) if tam else b""
 
+    def de_fora(self):
+        """Recusa pedidos que não vêm do próprio painel.
+
+        O servidor só escuta em 127.0.0.1, mas qualquer site aberto no navegador consegue
+        mandar pedidos para cá. O Host confere que o endereço é o nosso (protege contra
+        DNS rebinding, que permitiria a um site LER as respostas: CPF do contador, SPEDs dos
+        clientes) e o Origin confere que o pedido saiu de uma página do painel (protege
+        contra outro site gravar, apagar ou encerrar)."""
+        porta = self.server.server_address[1]
+        locais = {f"127.0.0.1:{porta}", f"localhost:{porta}"}
+        host = (self.headers.get("Host") or "").strip().lower()
+        origem = (self.headers.get("Origin") or "").strip().lower()
+        if host not in locais or (origem and origem.removeprefix("http://") not in locais):
+            self.responder({"erro": "pedido recusado: só o próprio painel pode usar este endereço"}, status=403)
+            return True
+        return False
+
     def do_GET(self):
+        if self.de_fora():
+            return
         url = urlparse(self.path)
         rota, q = url.path, parse_qs(url.query)
         try:
@@ -205,7 +235,8 @@ class Painel(BaseHTTPRequestHandler):
             if rota.startswith("/api/ver/"):
                 arq = SAIDA / nome_seguro(rota[9:])
                 if arq.exists():
-                    de = int((q.get("de") or ["0"])[0])
+                    de = (q.get("de") or ["0"])[0]
+                    de = int(de) if de.isdigit() else 0
                     linhas = arq.read_text(encoding="latin-1").splitlines()
                     return self.responder({"total": len(linhas), "de": de, "linhas": linhas[de:de + 1000]})
             self.responder({"erro": "não encontrado"}, status=404)
@@ -213,6 +244,8 @@ class Painel(BaseHTTPRequestHandler):
             self.falha(e)
 
     def do_POST(self):
+        if self.de_fora():
+            return
         url = urlparse(self.path)
         rota, q = url.path, parse_qs(url.query)
         try:
@@ -234,17 +267,21 @@ class Painel(BaseHTTPRequestHandler):
                 return
             if rota == "/api/abrir-pasta":
                 SAIDA.mkdir(parents=True, exist_ok=True)
-                os.startfile(SAIDA)
+                abrir_pasta(SAIDA)
                 return self.responder({"ok": True})
             if rota == "/api/escritorio":
                 dados = {k: str(v).strip() for k, v in json.loads(self.corpo() or b"{}").items()}
-                gs.ESCRITORIO.write_text(json.dumps(dados, ensure_ascii=False, indent=2), encoding="utf-8")
+                with trava:
+                    gs.DADOS.mkdir(parents=True, exist_ok=True)
+                    gs.ESCRITORIO.write_text(json.dumps(dados, ensure_ascii=False, indent=2), encoding="utf-8")
                 return self.responder({"ok": True})
             self.responder({"erro": "não encontrado"}, status=404)
         except Exception as e:
             self.falha(e)
 
     def do_DELETE(self):
+        if self.de_fora():
+            return
         url = urlparse(self.path)
         rota, q = url.path, parse_qs(url.query)
         try:
@@ -262,6 +299,13 @@ class Painel(BaseHTTPRequestHandler):
             self.falha(e)
 
 
+def abrir_pasta(pasta):
+    if sys.platform == "win32":
+        os.startfile(pasta)
+    else:  # só para rodar o painel em desenvolvimento fora do Windows
+        subprocess.Popen(["open" if sys.platform == "darwin" else "xdg-open", str(pasta)])
+
+
 def limpar_entradas_antigas():
     if not ENTRADAS.exists():
         return
@@ -277,16 +321,26 @@ def main():
     if sys.stderr is None:
         gs.DADOS.mkdir(parents=True, exist_ok=True)
         sys.stderr = open(gs.DADOS / "painel.log", "a", encoding="utf-8", buffering=1)
+    ap = argparse.ArgumentParser(description="Painel do Estoque SPED")
+    ap.add_argument("--porta", type=int, default=int(os.environ.get("ESTOQUE_PORTA") or PORTA),
+                    help="porta local (0 = qualquer porta livre, usado pelo app desktop)")
+    ap.add_argument("--sem-navegador", action="store_true", help="não abre o navegador")
+    opc = ap.parse_args()
+
     limpar_entradas_antigas()
-    endereco = f"http://127.0.0.1:{PORTA}"
     try:
-        servidor = ThreadingHTTPServer(("127.0.0.1", PORTA), Painel)
+        servidor = ThreadingHTTPServer(("127.0.0.1", opc.porta), Painel)
     except OSError:
-        print(f"O painel já está aberto em {endereco}")
-        webbrowser.open(endereco)
-        return
-    print(f"Painel aberto em {endereco}  (feche esta janela para encerrar)")
-    if "--sem-navegador" not in sys.argv:
+        endereco = f"http://127.0.0.1:{opc.porta}"
+        print(f"O painel já está aberto em {endereco}", flush=True)
+        if not opc.sem_navegador:
+            webbrowser.open(endereco)
+        sys.exit(3)
+    porta = servidor.server_address[1]
+    endereco = f"http://127.0.0.1:{porta}"
+    print(f"PORTA={porta}", flush=True)
+    print(f"Painel aberto em {endereco}  (feche esta janela para encerrar)", flush=True)
+    if not opc.sem_navegador:
         threading.Timer(0.6, webbrowser.open, [endereco]).start()
     try:
         servidor.serve_forever()
