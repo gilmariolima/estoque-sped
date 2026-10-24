@@ -409,11 +409,26 @@ def cabecalho(linhas):
     return None, None
 
 
+RE_ROTULO_NOME = re.compile(r"(EMPRESA|RAZAO SOCIAL|FIRMA|NOME EMPRESARIAL|CONTRIBUINTE)\s*:?\s*")
+
+
 def titulo_da_planilha(linhas):
-    """CNPJ e data do inventário escritos nas linhas acima do cabeçalho
-    ("INVENTÁRIO EM 31/12/2025", "Empresa: ... CNPJ 11.222.333/0001-81")."""
-    empresa, data_inv = {}, None
+    """Nome, CNPJ, data e total do inventário escritos nas linhas acima do cabeçalho
+    ("INVENTÁRIO EM 31/12/2025", "Empresa: ... CNPJ 11.222.333/0001-81", "Total do inventário: 2.317,56")."""
+    empresa, data_inv, total = {}, None, None
     for l in linhas:
+        celulas = [v for v in l if v not in ("", None)]
+        if celulas and isinstance(celulas[0], str):
+            rotulo = sem_acento(celulas[0]).strip()
+            # "Empresa:" numa célula e o nome na seguinte, ou "Empresa: NOME - CNPJ ..." na mesma
+            if "nome" not in empresa and (m := RE_ROTULO_NOME.match(rotulo)):
+                resto = celulas[0][m.end():].strip() if len(rotulo) > m.end() else (
+                    celulas[1] if len(celulas) > 1 and isinstance(celulas[1], str) else "")
+                resto = re.split(r"\s+-?\s*C\.?N\.?P\.?J", resto, flags=re.I)[0].strip(" -")
+                if resto:
+                    empresa["nome"] = texto(resto)
+            if total is None and re.match(r"TOTA(L|IS)\b", rotulo):
+                total = next((num(v) for v in celulas[1:] if isinstance(v, (int, float))), None)
         for v in l:
             if isinstance(v, (date,)) and not data_inv:
                 txt = sem_acento(" ".join(str(x) for x in l))
@@ -429,7 +444,7 @@ def titulo_da_planilha(linhas):
         if not data_inv and re.search(r"INVENT|ESTOQUE|POSICAO|SALDO", limpo) and not re.search(r"EMITID|IMPRESS|GERAD", limpo):
             if m := re.search(r"(\d{2})/(\d{2})/(\d{4})", txt):
                 data_inv = data_ddmmaaaa(m[0])
-    return empresa, data_inv
+    return empresa, data_inv, total
 
 
 def ler_planilha(caminho):
@@ -443,8 +458,8 @@ def ler_planilha(caminho):
             raise ValueError("não achei a linha de cabeçalho (Código, Descrição, Quantidade...)")
     finally:
         abas.close()  # fecha o arquivo já: no Windows, aberto ele fica preso
-    empresa, data_inv = titulo_da_planilha(linhas[:ini])
-    total_declarado = None
+    # o total do topo serve para conferir; uma linha de total no fim da tabela vale mais
+    empresa, data_inv, total_declarado = titulo_da_planilha(linhas[:ini])
     pega = lambda l, k: l[mapa[k]] if k in mapa and mapa[k] < len(l) else ""
     # Planilha com vírgula decimal (CSV brasileiro, texto no Excel): aí "1.234" é milhar
     numericas = [mapa[k] for k in ("qtd", "qtd_terc", "vl_unit", "vl_item", "icms_rec") if k in mapa]
@@ -786,6 +801,9 @@ class Resultado:
 
 def converter(principal, extras, args):
     pendencias, gerados = [], [0]
+    if not principal.itens:
+        raise ErroConversao(f"{principal.caminho.name} não tem nenhum item: confira se é o arquivo certo "
+                            "ou se a planilha foi preenchida.")
     # Sem valor em nenhum arquivo não há inventário a gerar: avisa isso antes de pedir a data,
     # que não adiantaria nada (ex.: Estoque Escriturado, que só tem quantidades)
     if principal.itens and not any(f.tem_valores for f in [principal, *extras]):
@@ -822,7 +840,7 @@ def converter(principal, extras, args):
         escritorio = {}
         pendencias.append(("arquivo", "0100", "dados do escritório não cadastrados: registro 0100 (contabilista) não gerado"))
 
-    if not itens and principal.itens:
+    if not itens:
         # Sem isso sairia um SPED com o bloco H vazio, que parece certo e não tem inventário
         motivo = collections.Counter(m for t, _, m in pendencias if t == "item").most_common(1)
         dica = (" O arquivo não tem valores: use-o junto com o inventário (relatório, .FS ou planilha com valor unitário)."
