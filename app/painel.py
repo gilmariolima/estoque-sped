@@ -99,7 +99,7 @@ def converter(dados):
             res = gs.converter(principal, extras, args)
         except gs.ErroConversao as e:
             return {"erro": str(e), "arquivos": arquivos, "principal": principal.caminho.name}
-        arq, arq_pend = gs.gravar(res, SAIDA)
+        arq, arq_pend, arq_dom = gs.gravar(res, SAIDA)
 
     por_item = {}
     gerais = []
@@ -134,7 +134,7 @@ def converter(dados):
             "periodo": f"{res.ini:%d/%m/%Y} a {res.fim:%d/%m/%Y}",
         },
         "itens": itens, "fora": fora, "gerais": gerais,
-        "arquivo": arq.name, "pendencias": arq_pend.name if res.pendencias else "",
+        "arquivo": arq.name, "pendencias": arq_pend.name if res.pendencias else "", "dominio": arq_dom.name,
     }
 
 
@@ -158,6 +158,8 @@ def gerados():
                     info["itens"] += 1
         pend = arq.with_name(arq.stem + "_pendencias.csv")
         info["pendencias"] = pend.name if pend.exists() else ""
+        dom = arq.with_name("DOMINIO_" + arq.name.removeprefix("SPED_"))
+        info["dominio"] = dom.name if dom.exists() else ""
         lista.append(info)
     return lista
 
@@ -293,6 +295,7 @@ class Painel(BaseHTTPRequestHandler):
                 arq = SAIDA / nome_seguro(rota[12:])
                 arq.unlink(missing_ok=True)
                 arq.with_name(arq.stem + "_pendencias.csv").unlink(missing_ok=True)
+                arq.with_name("DOMINIO_" + arq.name.removeprefix("SPED_")).unlink(missing_ok=True)
                 return self.responder({"ok": True})
             self.responder({"erro": "não encontrado"}, status=404)
         except Exception as e:

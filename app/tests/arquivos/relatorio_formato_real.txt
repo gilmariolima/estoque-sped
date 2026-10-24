@@ -1,0 +1,30 @@
+                                                      Registro de Inventário
+       Firma : COMERCIAL MODELO - FILIAL
+
+   Insc. Est. : 061234567                    CNPJ......................: 11.222.333/0001-81
+
+        Livro : 0001   Folha....: 0002     Estoque existente em : 31/12/2025
+
+  Classificação                                                                                               Valores
+                                         Descrição                         Unid. Quantidade
+     Fiscal                                                                                        Unitário             Total
+91021110           16830 RELOGIO MODELO A                               UN            3,0000      806,8600             2.420,58
+48237000           5095 - EXPOSITOR 6 BALDAS                            UN           13,0000        1,0000                13,00
+21069090           5102- ISOTONIC DRINK MONODOSIS (LIMON)               UN            2,0000        3,8100                 7,62
+94037000           BG 99100-003-A EXP MEDIO EM PLASTICO P/              UN           21,0000      249,2000             5.233,20
+44209000           GC 1999885 EXPOSITOR EM MADEIRA                      UN            4,0000    2.272,6200             9.090,48
+                                                      Registro de Inventário
+       Firma : COMERCIAL MODELO - FILIAL
+
+   Insc. Est. : 061234567                    CNPJ......................: 11.222.333/0001-81
+
+        Livro : 0001   Folha....: 0003     Estoque existente em : 31/12/2025
+
+  Classificação                                                                                               Valores
+                                         Descrição                         Unid. Quantidade
+     Fiscal                                                                                        Unitário             Total
+39233090           SQUEEZE BRANCA 790ML                                 UN          254,0000        7,4800             1.899,92
+91149000           TI11397JS/61 TIJA P/ RELOGIO 3H                      UN            5,0000        1,3100                 6,55
+91149000           TI11397JS/61 TIJA P/ RELOGIO 9H                      UN            5,0000        1,3100                 6,55
+19019090           5011 - HIGH ENERGY GEL 76G (LIMÓN)                   UN        3.142,0000        7,0200            22.056,84
+Total:                                                                                                                    40.734,75
