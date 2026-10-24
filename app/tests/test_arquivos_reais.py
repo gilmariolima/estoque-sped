@@ -138,8 +138,19 @@ class FormatoDosArquivosReais(unittest.TestCase):
         self.assertNotIn("FALSE", {c[1] for c in reg("0190")})
 
     def test_estoque_escriturado_sozinho_nao_gera_bloco_h_vazio(self):
-        with self.assertRaisesRegex(gs.ErroConversao, "não tem valores"):
+        with self.assertRaisesRegex(gs.ErroConversao, "só tem quantidades"):
             gerar("estoque_escriturado_formato_real.xls", data_inv="31/12/2024")
+
+    def test_sem_valores_avisa_antes_de_pedir_a_data(self):
+        # O Estoque Escriturado não traz data nem valor: pedir a data primeiro não resolveria nada
+        with self.assertRaisesRegex(gs.ErroConversao, "só tem quantidades") as erro:
+            gerar("estoque_escriturado_formato_real.xls")
+        self.assertIsNone(erro.exception.campo)
+
+    def test_sem_data_aponta_o_campo(self):
+        with self.assertRaises(gs.ErroConversao) as erro:
+            gerar("cod_produto_antigo.xls")
+        self.assertEqual(erro.exception.campo, "data_inv")
 
     def test_fs_com_estoque_escriturado_avisa_quantidade_divergente(self):
         res, reg = gerar("fortes_layout_real.FS", "estoque_escriturado_formato_real.xls")

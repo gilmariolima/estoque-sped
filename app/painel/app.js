@@ -78,9 +78,25 @@ async function converter(msg = "Gerando o SPED…") {
   $("#erroConv").hidden = !r.erro;
   $("#erroConv").textContent = r.erro || "";
   if (r.erro) {
-    $("#resultado").hidden = !r.campos;
     $("#btnBaixar").hidden = true;
     $("#btnDominio").hidden = true;
+    $("#btnPend").hidden = true;
+    // O formulário continua na tela: é nele que se resolve o erro (ex.: a data que o arquivo não traz)
+    $("#resultado").hidden = !r.campos;
+    if (r.campos) {
+      preencherFormulario(r.campos);
+      estado.res = { itens: [] };
+      $("#nTodos").textContent = "0";
+      $("#nPend").textContent = "0";
+      $("#resumo").innerHTML = "";
+      $("#gerais").innerHTML = "";
+      desenharItens();
+      const campo = r.campo && $("#formEmp").elements[r.campo];
+      if (campo) {
+        campo.classList.add("falta");
+        campo.focus();
+      }
+    }
     return;
   }
   estado.limite = POR_PAGINA;
@@ -114,7 +130,7 @@ function desenharArquivos(infos) {
   const n = estado.arquivos.length;
   const r = estado.res;
   $("#contaConv").textContent = !n ? "Nenhum arquivo"
-    : `${n} ${n > 1 ? "arquivos" : "arquivo"}` + (r && r.campos ? ` · inventário em ${r.campos.data_inv}` : "");
+    : `${n} ${n > 1 ? "arquivos" : "arquivo"}` + (r && !r.erro && r.campos?.data_inv ? ` · inventário em ${r.campos.data_inv}` : "");
 }
 
 $("#listaArquivos").addEventListener("click", async (e) => {
@@ -162,12 +178,19 @@ function desenharItens() {
   $("#maisItens").textContent = `Mostrar mais ${milhar(Math.min(resto, POR_PAGINA))} de ${milhar(resto)}`;
 }
 
+function preencherFormulario(campos) {
+  const form = $("#formEmp");
+  // O que a pessoa já digitou fica: só preenche os campos que ela não mexeu
+  Object.entries(campos).forEach(([k, v]) => { if (form.elements[k] && !estado.editados.has(k)) form.elements[k].value = v; });
+  ["nome", "cnpj", "ie", "uf", "cod_mun"].forEach((k) => form.elements[k].classList.toggle("falta", !form.elements[k].value.trim()));
+  form.elements.data_inv.classList.remove("falta");
+  form.elements.periodo.classList.remove("falta");
+}
+
 function desenharResultado() {
   const r = estado.res;
   $("#resultado").hidden = false;
-  const form = $("#formEmp");
-  Object.entries(r.campos).forEach(([k, v]) => { if (form.elements[k]) form.elements[k].value = v; });
-  ["nome", "cnpj", "ie", "uf", "cod_mun"].forEach((k) => form.elements[k].classList.toggle("falta", !form.elements[k].value.trim()));
+  preencherFormulario(r.campos);
   $("#nTodos").textContent = milhar(r.itens.length);
   $("#nPend").textContent = milhar(r.itens.filter((i) => i.p.length).length);
 
