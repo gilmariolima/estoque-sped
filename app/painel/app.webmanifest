@@ -1,0 +1,12 @@
+{
+  "name": "Estoque SPED",
+  "short_name": "Estoque SPED",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#e9eef6",
+  "theme_color": "#1453a3",
+  "icons": [
+    { "src": "/web/icone.png?v=__ICONE__", "sizes": "256x256", "type": "image/png" },
+    { "src": "/web/icone.svg?v=__ICONE__", "sizes": "any", "type": "image/svg+xml" }
+  ]
+}

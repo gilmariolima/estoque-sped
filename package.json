@@ -1,0 +1,77 @@
+{
+  "name": "estoque-sped",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Converte o inventário do cliente em SPED Fiscal (EFD ICMS/IPI) com o bloco H.",
+  "type": "commonjs",
+  "main": "electron/main.js",
+  "engines": {
+    "node": ">=22"
+  },
+  "scripts": {
+    "app": "electron .",
+    "preparar-python": "node scripts/preparar-python.js",
+    "test": "node --test && node scripts/python.js -m unittest discover -s tests",
+    "pacote": "node scripts/preparar-python.js && electron-builder --win --x64"
+  },
+  "author": "Gilmario Lima",
+  "devDependencies": {
+    "adm-zip": "^0.5.16",
+    "electron": "^45.0.0",
+    "electron-builder": "^26.18.0"
+  },
+  "build": {
+    "appId": "com.gilmariolima.estoquesped",
+    "productName": "Estoque SPED",
+    "copyright": "Estoque SPED",
+    "directories": {
+      "output": "pacote"
+    },
+    "files": [
+      "package.json",
+      "electron/**/*",
+      "app/icone-*.ico"
+    ],
+    "extraResources": [
+      {
+        "from": "app",
+        "to": "estoque",
+        "filter": [
+          "**/*",
+          "!tests/**",
+          "!**/__pycache__/**",
+          "!**/*.pyc"
+        ]
+      }
+    ],
+    "win": {
+      "target": [
+        {
+          "target": "nsis",
+          "arch": [
+            "x64"
+          ]
+        }
+      ],
+      "icon": "app/icone-f2e14cb9.ico",
+      "executableName": "Estoque SPED"
+    },
+    "nsis": {
+      "oneClick": true,
+      "perMachine": false,
+      "runAfterFinish": true,
+      "createDesktopShortcut": "always",
+      "createStartMenuShortcut": true,
+      "shortcutName": "Estoque SPED",
+      "deleteAppDataOnUninstall": false,
+      "artifactName": "Estoque-SPED-Setup-${version}.${ext}"
+    },
+    "linux": {
+      "target": [
+        "dir"
+      ],
+      "icon": "app/painel/icone.png",
+      "category": "Office"
+    }
+  }
+}
