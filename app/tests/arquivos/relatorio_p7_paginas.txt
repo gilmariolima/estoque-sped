@@ -1,0 +1,20 @@
+
+                           REGISTRO DE INVENTÁRIO - MODELO P7                        Folha: 001
+FIRMA: MERCADINHO BOM PRECO LTDA
+INSC. EST.: 06.123.456-7                    C.N.P.J.: 11.222.333/0001-81
+ESTOQUES EXISTENTES EM 31/12/2025
+CLASSIF.  DISCRIMINAÇÃO                              UNID   QUANTIDADE   VALOR UNIT.     VALOR TOTAL
+--------  -----------------------------------------  ----  -----------  ------------  --------------
+22021000 7891234 REFRIG COLA 2L PET                UN       48,000        5,9900          287,52
+19053100 B-77 BISCOITO RECHEADO 140G                 PCT     120,000        2,1500          258,00
+                                                         A TRANSPORTAR:                       545,52
+
+                           REGISTRO DE INVENTÁRIO - MODELO P7                        Folha: 002
+FIRMA: MERCADINHO BOM PRECO LTDA
+INSC. EST.: 06.123.456-7                    C.N.P.J.: 11.222.333/0001-81
+ESTOQUES EXISTENTES EM 31/12/2025
+CLASSIF.  DISCRIMINAÇÃO                              UNID   QUANTIDADE   VALOR UNIT.     VALOR TOTAL
+--------  -----------------------------------------  ----  -----------  ------------  --------------
+                                                         TRANSPORTE:                          545,52
+04012010 LEITE UHT INTEGRAL 1L                       CX       15,000       54,0000          810,00
+         Total:                                                                          1.355,52

@@ -1,0 +1,13 @@
+node_modules/
+pacote/
+# Python embutido: montado por "npm run preparar-python" (vai no instalador, não no git)
+app/python/
+__pycache__/
+*.pyc
+# dados de uso (quando roda o painel direto da pasta app)
+app/dados/
+app/saida/
+app/entradas/
+app/empresas.json
+app/escritorio.json
+app/painel.log
