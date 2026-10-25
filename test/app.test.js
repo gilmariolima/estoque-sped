@@ -7,6 +7,7 @@ const path = require('node:path')
 const { test } = require('node:test')
 const { pastaDados, pastaVersaoAntiga, migrarDadosAntigos, limparVersaoAntiga } = require('../electron/dados')
 const { pastaMotor, caminhoPython, iniciarMotor } = require('../electron/motor')
+const { criarAtualizacao } = require('../electron/atualizar')
 
 const RAIZ = path.resolve(__dirname, '..')
 const tmp = () => fs.mkdtempSync(path.join(os.tmpdir(), 'estoque-app-'))
@@ -155,4 +156,68 @@ test('painel: número montado em HTML passa pelo esc() (total de um SPED mexido 
   const js = fs.readFileSync(path.join(RAIZ, 'app', 'painel', 'app.js'), 'utf8')
   const semEsc = js.split('\n').filter((l) => /<(td|p|span)\b/.test(l) && /\$\{milhar\(/.test(l))
   assert.deepEqual(semEsc, [])
+})
+
+/** autoUpdater de mentira: guarda os ouvintes e as chamadas. */
+function atualizadorFalso({ falhar = false } = {}) {
+  const ouvintes = {}
+  return {
+    ouvintes,
+    instalou: null,
+    procurou: 0,
+    on(evento, fn) { ouvintes[evento] = fn },
+    async checkForUpdates() {
+      this.procurou++
+      if (falhar) throw new Error('sem internet')
+    },
+    quitAndInstall(silencioso, reabrir) { this.instalou = { silencioso, reabrir } },
+  }
+}
+
+test('atualização: sem versão baixada, fechar o app não instala nada', async () => {
+  const atualizador = atualizadorFalso()
+  const a = criarAtualizacao({ atualizador, perguntar: async () => ({ response: 1 }), sair: () => {} })
+  await a.procurar()
+  assert.equal(atualizador.procurou, 1)
+  assert.equal(atualizador.autoInstallOnAppQuit, false)
+  assert.equal(a.instalarAoSair(), false)
+  assert.equal(atualizador.instalou, null)
+})
+
+test('atualização: "Reiniciar agora" fecha o app e instala reabrindo', async () => {
+  const atualizador = atualizadorFalso()
+  let saiu = 0
+  let pergunta
+  const a = criarAtualizacao({ atualizador, perguntar: async (o) => { pergunta = o; return { response: 0 } }, sair: () => saiu++ })
+  await atualizador.ouvintes['update-downloaded']({ version: '1.2.0' })
+  assert.match(pergunta.message, /1\.2\.0/)
+  assert.equal(saiu, 1)
+  assert.equal(a.instalarAoSair(), true)
+  assert.deepEqual(atualizador.instalou, { silencioso: true, reabrir: true })
+})
+
+test('atualização: "Depois" instala só ao fechar, sem reabrir', async () => {
+  const atualizador = atualizadorFalso()
+  let saiu = 0
+  const a = criarAtualizacao({ atualizador, perguntar: async () => ({ response: 1 }), sair: () => saiu++ })
+  await atualizador.ouvintes['update-downloaded']({ version: '1.2.0' })
+  assert.equal(saiu, 0)
+  assert.equal(a.instalarAoSair(), true)
+  assert.deepEqual(atualizador.instalou, { silencioso: true, reabrir: false })
+})
+
+test('atualização: sem internet, só anota no log', async () => {
+  const log = path.join(tmp(), 'atualizacao.log')
+  const atualizador = atualizadorFalso({ falhar: true })
+  const a = criarAtualizacao({ atualizador, perguntar: async () => ({ response: 1 }), sair: () => {}, log })
+  await a.procurar()
+  assert.match(fs.readFileSync(log, 'utf8'), /erro .*sem internet/)
+  assert.equal(a.instalarAoSair(), false)
+})
+
+test('publicação: o pacote publica no GitHub deste repositório e leva o electron-updater', () => {
+  const pacote = require('../package.json')
+  assert.deepEqual(pacote.build.publish, [{ provider: 'github', owner: 'gilmariolima', repo: 'estoque-sped', releaseType: 'release' }])
+  assert.ok(pacote.dependencies['electron-updater'], 'electron-updater tem de ir em dependencies, não em devDependencies')
+  assert.match(pacote.scripts.pacote, /--publish never/)
 })
