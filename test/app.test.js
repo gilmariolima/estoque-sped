@@ -71,6 +71,38 @@ test('pasta nova só com o log não impede a migração', () => {
   assert.equal(migrarDadosAntigos({ antiga, nova }).modo, 'movido')
 })
 
+test('arquivo preso: copia os dados em vez de mover', () => {
+  const local = tmp()
+  const antiga = versaoAntiga(local)
+  const nova = path.join(local, 'Estoque SPED', 'dados')
+  fs.mkdirSync(`${nova}.migrando`, { recursive: true }) // restos de uma tentativa anterior
+  fs.writeFileSync(path.join(`${nova}.migrando`, 'lixo.txt'), 'x')
+  const preso = () => { throw Object.assign(new Error('EBUSY'), { code: 'EBUSY' }) }
+  const r = migrarDadosAntigos({ antiga, nova, mover: preso })
+  assert.equal(r.modo, 'copiado')
+  assert.equal(fs.readFileSync(path.join(nova, 'empresas.json'), 'utf8'), '{"11222333000181":{"uf":"CE"}}')
+  assert.ok(!fs.existsSync(path.join(nova, 'lixo.txt')))
+  assert.ok(!fs.existsSync(`${nova}.migrando`))
+  assert.ok(fs.existsSync(path.join(antiga, 'dados', 'empresas.json'))) // a cópia não apaga a origem
+})
+
+test('cópia interrompida não deixa a pasta nova pela metade e a próxima abertura migra', () => {
+  const local = tmp()
+  const antiga = versaoAntiga(local)
+  const nova = path.join(local, 'Estoque SPED', 'dados')
+  const preso = () => { throw new Error('EBUSY') }
+  const quebra = (_de, para) => {
+    fs.mkdirSync(para, { recursive: true })
+    fs.writeFileSync(path.join(para, 'empresas.json'), '{') // metade do arquivo
+    throw new Error('ENOSPC')
+  }
+  assert.throws(() => migrarDadosAntigos({ antiga, nova, mover: preso, copiar: quebra }), /ENOSPC/)
+  assert.ok(!fs.existsSync(nova))
+  assert.ok(!fs.existsSync(`${nova}.migrando`))
+  assert.equal(migrarDadosAntigos({ antiga, nova }).modo, 'movido')
+  assert.ok(fs.existsSync(path.join(nova, 'saida', 'SPED_1.txt')))
+})
+
 test('não apaga uma pasta app que não é da versão antiga', () => {
   const local = tmp()
   const antiga = versaoAntiga(local, { comDados: false })
@@ -86,10 +118,24 @@ test('motor: liga numa porta livre, responde e desliga', async () => {
   const m = await iniciarMotor({ python: caminhoPython({ motor }), motor, dados, log: path.join(dados, 'painel.log') })
   try {
     assert.match(m.url, /^http:\/\/127\.0\.0\.1:\d+$/)
-    const r = await fetch(`${m.url}/api/gerados`)
+    assert.equal(m.entrada, `${m.url}/?t=${m.token}`)
+    const r = await fetch(`${m.url}/api/gerados`, { headers: { 'X-Estoque-Token': m.token } })
     assert.deepEqual(await r.json(), [])
+    // sem o token desta execução (outro programa, outro usuário do computador) é recusado
+    assert.equal((await fetch(`${m.url}/api/gerados`)).status, 401)
+    assert.equal((await fetch(`${m.url}/api/gerados`, { headers: { 'X-Estoque-Token': 'outro' } })).status, 401)
+    // a janela abre /?t=<token>: o painel guarda o token num cookie só dele e tira do endereço
+    const entrada = await fetch(m.entrada, { redirect: 'manual' })
+    assert.equal(entrada.status, 303)
+    assert.equal(entrada.headers.get('location'), '/')
+    const cookie = entrada.headers.get('set-cookie')
+    assert.match(cookie, /HttpOnly/)
+    assert.match(cookie, /SameSite=Strict/)
+    const pagina = await fetch(`${m.url}/`, { headers: { Cookie: cookie.split(';')[0] } })
+    assert.equal(pagina.status, 200)
+    assert.match(pagina.headers.get('content-security-policy'), /default-src 'self'/)
     // pedido de outro site é recusado
-    const fora = await fetch(`${m.url}/api/encerrar`, { method: 'POST', headers: { Origin: 'https://site-qualquer.com' } })
+    const fora = await fetch(`${m.url}/api/encerrar`, { method: 'POST', headers: { Origin: 'https://site-qualquer.com', 'X-Estoque-Token': m.token } })
     assert.equal(fora.status, 403)
   } finally {
     await m.parar()
@@ -103,4 +149,10 @@ test('motor: falha ao ligar explica o motivo', async () => {
     iniciarMotor({ python: caminhoPython({ motor: pastaMotor({ empacotado: false, raiz: RAIZ }) }), motor, dados: tmp(), espera: 10e3 }),
     /fechou ao ligar[\s\S]*painel\.py/,
   )
+})
+
+test('painel: número montado em HTML passa pelo esc() (total de um SPED mexido à mão não vira script)', () => {
+  const js = fs.readFileSync(path.join(RAIZ, 'app', 'painel', 'app.js'), 'utf8')
+  const semEsc = js.split('\n').filter((l) => /<(td|p|span)\b/.test(l) && /\$\{milhar\(/.test(l))
+  assert.deepEqual(semEsc, [])
 })

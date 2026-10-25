@@ -68,7 +68,12 @@
             <label><span class="rot">UF</span><input class="input" name="uf" maxlength="2"></label>
             <label><span class="rot" title="Código IBGE do município, 7 dígitos">Município (IBGE)</span><input class="input" name="cod_mun" inputmode="numeric" maxlength="7"></label>
             <label><span class="rot">Data do inventário</span><input class="input" name="data_inv" placeholder="31/12/2025"></label>
-            <label><span class="rot" title="Mês da EFD. O inventário de 31/12 vai, por regra, na EFD de fevereiro.">Período (mês)</span><input class="input" name="periodo" placeholder="12/2025"></label>
+            <label><span class="rot" title="Mês da EFD. Pelo Guia Prático, o inventário vai na EFD do segundo mês depois dele: o de 31/12 vai na de fevereiro.">Período (mês)</span><input class="input" name="periodo" placeholder="02/2026"></label>
+            <label><span class="rot" title="CEP do estabelecimento (registro 0005)">CEP</span><input class="input" name="cep" inputmode="numeric" maxlength="9"></label>
+            <label class="larga"><span class="rot" title="Logradouro do estabelecimento (registro 0005)">Endereço</span><input class="input" name="end"></label>
+            <label><span class="rot">Número</span><input class="input" name="num" maxlength="10"></label>
+            <label><span class="rot">Complemento</span><input class="input" name="compl"></label>
+            <label><span class="rot">Bairro</span><input class="input" name="bairro"></label>
             <label><span class="rot">Perfil</span><select class="input" name="perfil"><option>A</option><option>B</option><option>C</option></select></label>
             <label><span class="rot">Atividade</span><select class="input" name="ind_ativ"><option value="1">Outros</option><option value="0">Industrial</option></select></label>
             <label class="larga"><span class="rot" title="Usado quando o arquivo não informa o tipo do item">Tipo do item (padrão)</span>

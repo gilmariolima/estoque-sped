@@ -11,3 +11,4 @@ app/entradas/
 app/empresas.json
 app/escritorio.json
 app/painel.log
+app/painel.token
