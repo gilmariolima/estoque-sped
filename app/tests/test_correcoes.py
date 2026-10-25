@@ -601,14 +601,13 @@ class Pendencias(Base):
         self.assertIn('"=""12""""3"""', texto)  # ="12""3" dentro do CSV
 
     def test_pendencia_fica_no_item_certo(self):
-        # Código repetido com outra descrição é renomeado: o aviso de arredondamento era do
-        # segundo item, mas ia para o primeiro
-        p = arquivo("renomeado.csv", "Codigo;Descricao;Qtd;Valor Unit\nA1;UM;1;1,00\nA1;DOIS;1,2345;1,00\n")
+        # Código repetido com outra descrição é renomeado: o aviso do segundo item ia para o primeiro
+        p = arquivo("renomeado.csv", "Codigo;Descricao;Qtd;Valor Unit;Valor Total\nA1;UM;1;1,00;1,00\nA1;DOIS;2;1,00;5,00\n")
         res = self.gerar(p)
         por = {i.codigo: i.pendencias for i in res.itens}
         self.assertEqual(por["A1"], [])
-        self.assertTrue(any("arredondada" in m for m in por["A1-2"]))
-        self.assertTrue(any(c == "A1-2" and "arredondada" in m for _, c, m in res.pendencias))
+        self.assertTrue(any("total do arquivo 5,00" in m for m in por["A1-2"]))
+        self.assertTrue(any(c == "A1-2" and "total do arquivo" in m for _, c, m in res.pendencias))
 
 
 class Conferencias(Base):
@@ -657,6 +656,143 @@ class Conferencias(Base):
             # escolhido no formulário, vale o que a pessoa marcou
             res = gs.converter(f, [], gs.opcoes(data_inv="31/12/2025", cnpj="71503824000122", ind_ativ="1"))
             self.assertEqual(self.reg(res, "0000")[0][14], "1")
+
+
+class Rodada2(Base):
+    """Melhorias dos testes manuais com os clientes fictícios."""
+
+    CAB = "REGISTRO DE INVENTARIO\nFirma: LOJA\nEstoque existente em 31/12/2025\n"
+
+    def test_total_diferente_de_quantidade_vezes_unitario(self):
+        # Fórmula errada na planilha (=SOMA(qtd+unit)): o total era aceito sem aviso
+        p = arquivo("formula.csv", "Codigo;Descricao;Qtd;Valor Unit;Valor Total\n10008;TECIDO;1232,89;12;1244,89\n"
+                                   "1001642;COLETE;88;2;90\nA3;OK;3;2,47;7,40\nA4;OK2;10000;1,23;12345,00\n")
+        res = self.gerar(p)
+        h = self.h010(res)
+        self.assertEqual((h["10008"][5], h["1001642"][5]), ("14794,68", "176,00"))
+        self.assertEqual((h["A3"][5], h["A4"][5]), ("7,40", "12345,00"))  # unitário arredondado no arquivo: confere
+        self.assertTrue(any(c == "10008" and "total do arquivo 1244,89" in m for _, c, m in res.pendencias))
+        self.assertTrue(self.pend(res, "2 de 4 itens com total diferente de quantidade × unitário", "arquivo"))
+        self.assertTrue(gs.total_confere(Decimal("3"), Decimal("2.47"), Decimal("7.40")))
+        self.assertFalse(gs.total_confere(Decimal("88"), Decimal("2"), Decimal("90")))
+        # unitário inteiro é o valor digitado, não um arredondamento: 1308 × 1 não é 1310
+        self.assertFalse(gs.total_confere(Decimal("1308"), Decimal("1"), Decimal("1310")))
+        self.assertTrue(gs.total_confere(Decimal("10000"), Decimal("1.23"), Decimal("12345")))
+
+    def test_complemento_de_outro_estabelecimento(self):
+        # Matriz junto com a filial: a matriz não pode completar quantidade nem dados da filial
+        filial = arquivo("filial.txt", "REGISTRO DE INVENTARIO\nFirma: LOJA FILIAL\nInsc. Est.: 123  CNPJ: 11.222.333/0002-62\n"
+                         "Estoque existente em 31/12/2025\n94036000 A1 CADEIRA          UN   2,000   10,0000   20,00\n")
+        matriz = arquivo("matriz.txt", "REGISTRO DE INVENTARIO\nFirma: LOJA MATRIZ\nInsc. Est.: 999  CNPJ: 11.222.333/0001-81\n"
+                         "Estoque existente em 31/12/2025\n94036000 A1 CADEIRA          UN   9,000   10,0000   90,00\n"
+                         "94036000 B2 MESA             UN   1,000   50,0000   50,00\n")
+        fontes = [gs.ler_arquivo(filial), gs.ler_arquivo(matriz)]
+        res = gs.converter(fontes[0], [fontes[1]], gs.opcoes(sem_consulta=True))
+        validar(self, res.registros)
+        self.assertEqual(res.emp["cnpj"], "11222333000262")
+        self.assertEqual(res.emp["ie"], "123")
+        self.assertTrue(self.pend(res, "é de outro estabelecimento (CNPJ 11222333000181)", "arquivo"))
+        self.assertFalse(self.pend(res, "difere da de"))
+        self.assertFalse(self.pend(res, "não estão no inventário"))
+
+    def test_complemento_de_outra_data_so_completa_o_cadastro(self):
+        inv = arquivo("inv2025.csv", "Codigo;Qtd;Valor Unit\nA1;5;2,00\nA2;1;3,00\n")
+        ano_passado = arquivo("inv2024.csv", "Inventário em 31/12/2024\nCodigo;Descricao;NCM;Qtd;Valor Unit\n"
+                              "A1;CANETA;96081000;99;8,00\nZ9;OUTRO;96081000;7;1,00\n")
+        res = self.gerar(inv, ano_passado)
+        h = self.h010(res)
+        self.assertEqual((h["A1"][3], h["A1"][4]), ("5,000", "2,000000"))  # quantidade e valor do inventário
+        self.assertEqual(self.reg(res, "0200")[0][2:8:5], ["CANETA", "96081000"])  # descrição e NCM do cadastro
+        self.assertTrue(self.pend(res, "é de outra data (31/12/2024)", "arquivo"))
+        self.assertFalse(self.pend(res, "difere da de"))
+        self.assertFalse(self.pend(res, "não estão no inventário"))
+
+    def test_cadastro_do_fs_sem_inventario_completa(self):
+        fs = ("CAB|001|1|FORTES|LOJA|11222333000181|31122024|\nGRP|1|ROUPA|4|04|\n"
+              "PRO|1|BLUSA BASICA|B1|61061000|PC|||001|001|\nPRO|2|CALCA JEANS|C2|62046200|PC|||001|001|\n"
+              "IIV|1|31122024|1|5,000|PC|10,0000|01|50,00|\n")
+        inv = arquivo("bloco_h.txt", "|H005|31122025|30,00|01|\n|H010|C2|PC|1,000|30,000000|30,00|0||||30,00|\n")
+        res = self.gerar(inv, arquivo("cad.FS", fs))
+        self.assertEqual(self.reg(res, "0200")[0][2:8], ["CALCA JEANS", "", "", "PC", "04", "62046200"])
+
+    def test_descricao_cortada_no_relatorio(self):
+        linhas = "".join(f"9113{n:04d} X{n:03d} PULSEIRA COURO TRABALHADO GENUI  UN   1,000   1,0000   1,00\n" for n in range(4))
+        f = gs.ler_arquivo(arquivo("cortado.txt", self.CAB + linhas))
+        self.assertTrue(any("4 item(ns) com código e descrição no limite de 36 caracteres" in a for a in f.avisos))
+        # junto com um cadastro, vale a descrição completa
+        cad = arquivo("cad_cortado.csv", "Codigo;Descricao\nX000;PULSEIRA COURO TRABALHADO GENUINO MARROM\n")
+        res = self.gerar(arquivo("cortado2.txt", self.CAB + linhas), cad)
+        self.assertEqual(self.reg(res, "0200")[0][2], "PULSEIRA COURO TRABALHADO GENUINO MARROM")
+
+    def test_codigo_do_traco_com_varias_descricoes(self):
+        rel = self.CAB + ("85176277 RUN PRO BLUE - SMARTWATCH AURORA  UN   1,000   10,0000   10,00\n"
+                          "85176277 RUN PRO BLUE - SMARTWATCH CRONOS  UN   1,000   10,0000   10,00\n")
+        res = self.gerar(arquivo("traco2.txt", rel))
+        self.assertTrue(self.pend(res, "\"RUN PRO BLUE\" aparece com 2 descrições diferentes", "arquivo"))
+
+    def test_pendencia_nao_se_repete_quando_linhas_somam(self):
+        rel = self.CAB + ("85176277 ZEN LITE - SMARTWATCH TEMPUS  UN   1,000   10,0000   10,00\n"
+                          "85176277 ZEN LITE - SMARTWATCH TEMPUS  UN   2,000   10,0000   20,00\n")
+        res = self.gerar(arquivo("soma.txt", rel))
+        msgs = [m for t, c, m in res.pendencias if c == "ZEN LITE"]
+        self.assertEqual(len(msgs), len(set(msgs)))
+
+    def test_arquivo_sem_nenhuma_descricao_vira_um_aviso_so(self):
+        txt = "|H005|31122025|30,00|01|\n|H010|A|UN|1,000|10,000000|10,00|0||||10,00|\n|H010|B|UN|2,000|10,000000|20,00|0||||20,00|\n"
+        res = self.gerar(arquivo("sem0200.txt", txt))
+        self.assertTrue(self.pend(res, "nenhum dos 2 itens tem descrição", "arquivo"))
+        self.assertFalse(self.pend(res, "sem descrição", "item"))
+
+    def test_tipo_de_industria_sugere_a_atividade(self):
+        p = arquivo("tipos.csv", "Codigo;Descricao;Qtd;Valor Unit;Tipo\nA1;TECIDO;1;1,00;01\nA2;BLUSA;1;1,00;04\n")
+        self.assertTrue(self.pend(self.gerar(p), "2 item(ns) com tipo de indústria", "arquivo"))
+        self.assertFalse(self.pend(self.gerar(p, ind_ativ="0"), "tipo de indústria"))
+
+    def test_inventario_fora_de_31_12(self):
+        p = arquivo("outubro.csv", "Codigo;Descricao;Qtd;Valor Unit\nA1;X;1;1,00\n")
+        self.assertTrue(self.pend(self.gerar(p, data_inv="31/10/2024"), "inventário em 31/10/2024 com o motivo 01", "arquivo"))
+        self.assertFalse(self.pend(self.gerar(p, data_inv="31/12/2024"), "com o motivo 01"))
+
+    def test_unidades_desconhecidas_e_sinonimas(self):
+        p = arquivo("unids.csv", "Codigo;Descricao;Unidade;Qtd;Valor Unit\nA1;X;PCT;1;1,00\nA2;Y;PCTE;1;1,00\nA3;Z;MI;1;1,00\n")
+        res = self.gerar(p)
+        self.assertTrue(self.pend(res, "unidade(s) MI fora da tabela", "arquivo"))
+        self.assertTrue(self.pend(res, "as siglas PCT e PCTE são a mesma unidade (PACOTE)", "arquivo"))
+
+    def test_mensagens_da_consulta_do_cnpj(self):
+        import urllib.error
+        nao_existe = urllib.error.HTTPError("u", 404, "Not Found", {}, None)
+        self.assertEqual(gs.erro_consulta("123", nao_existe), "CNPJ 123 não encontrado na Receita: confira o número")
+        self.assertEqual(gs.erro_consulta("123", urllib.error.URLError("x")), "sem acesso à internet para consultar o CNPJ")
+
+    def test_nome_da_receita_diferente_do_arquivo(self):
+        self.assertTrue(gs.nomes_parecidos("RELOJOARIA PONTEIRO DE OURO - MATRIZ", "PONTEIRO DE OURO RELOGIOS LTDA"))
+        self.assertFalse(gs.nomes_parecidos("RELOJOARIA PONTEIRO DE OURO - MATRIZ", "FULANO DE TAL"))
+        consulta = {"nome": "FULANO DE TAL", "fantasia": "KLEBER JOIAS", "uf": "SP", "cod_mun": "3534302", "cep": "14620000",
+                    "end": "RUA A", "num": "1", "compl": "", "bairro": "CENTRO", "fone": "", "email": "", "cnae": ""}
+        p = arquivo("nome.txt", "REGISTRO DE INVENTARIO\nFirma: RELOJOARIA PONTEIRO DE OURO - MATRIZ\nCNPJ: 11.222.333/0001-81\n"
+                    "Estoque existente em 31/12/2025\n91021110 10501 RELOGIO      UN   1,000   10,0000   10,00\n")
+        with mock.patch.object(gs, "consultar_cnpj", return_value=consulta), \
+             mock.patch.object(gs, "CADASTRO_EMPRESAS", TMP / "empresas_nome.json"):
+            res = gs.converter(gs.ler_arquivo(p), [], gs.opcoes())
+        self.assertTrue(self.pend(res, "não bate com o do CNPJ 11222333000181 na Receita", "empresa"))
+
+    def test_mensagem_da_diferenca_do_total(self):
+        p = arquivo("tot.csv", "Codigo;Descricao;Qtd;Valor Unit;Valor Total\nA1;X;1;1.000,00;1.000,00\n;;;Total:;1.000,01\n")
+        res = self.gerar(p)
+        self.assertTrue(self.pend(res, "total gerado 1.000,00 é 0,01 menor que o total do arquivo do cliente (1.000,01)", "total"))
+
+    def test_csv_agrupado_por_item(self):
+        p = arquivo("grupo_csv.csv", "Codigo;Descricao;Unidade;Qtd;Valor Unit;Valor Total\nA1;X;UN;1,5;1,00;9,00\nA2;Y;UN;1;1,00;1,00\n")
+        res = self.gerar(p)
+        _, pend, _ = gs.gravar(res, TMP / "saida-grupo")
+        linhas = pend.read_text(encoding="utf-8-sig").splitlines()[1:]
+        itens = [l.split(";")[1] for l in linhas if l.startswith("item;")]
+        self.assertEqual(itens, sorted(itens, key=itens.index))  # as de A1 juntas
+        self.assertEqual(len(itens), 2)
+        primeira_item = next(n for n, l in enumerate(linhas) if l.startswith("item;"))
+        self.assertTrue(all(not l.startswith("item;") for l in linhas[:primeira_item]))
+        self.assertTrue(all(l.startswith("item;") for l in linhas[primeira_item:]))
 
 
 class ArquivosDeExemplo(Base):

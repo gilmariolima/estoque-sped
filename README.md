@@ -106,7 +106,17 @@ O app nunca muda nem descarta um dado do cliente sem avisar. Vão para as pendê
 - números ambíguos (`1.500` sem nenhum outro número com casas decimais no arquivo) e planilhas que misturam vírgula e ponto decimal;
 - código ou descrição com caractere que o ISO-8859-1 não tem, código cortado em 60 caracteres, unidade cortada em 6;
 - TIPO_ITEM fora da tabela, CEST sem 7 dígitos, NCM sem 8 dígitos, ICMS recuperável maior que o valor do item;
-- outra aba da planilha com inventário, itens do arquivo de complemento que não estão no inventário, SPED de entrada com mais de um H005.
+- outra aba da planilha com inventário, itens do arquivo de complemento que não estão no inventário, SPED de entrada com mais de um H005;
+- total diferente de quantidade × unitário (fórmula errada na planilha): vale quantidade × unitário, e o item vai para as pendências;
+- descrição no limite de tamanho do relatório (cortada), "código" tirado do texto antes do " - " que aparece com descrições diferentes;
+- nome no arquivo diferente do nome do CNPJ na Receita (CNPJ digitado errado), inventário fora de 31/12 com o motivo 01;
+- unidades fora da tabela ou com duas siglas para a mesma unidade (PCT e PCTE), itens com tipo de indústria e Atividade "Outros".
+
+Avisos que valem para o arquivo todo (nenhum item com descrição, NCM faltando no comércio, quantidades arredondadas para 3 casas) aparecem uma vez só, e não em cada item: o filtro "Com pendência" mostra o que é de cada item.
+
+## Vários arquivos juntos
+
+O primeiro arquivo com quantidade e valor é o inventário (a estrela troca qual é); os outros completam descrição, NCM, unidade, tipo e valor pelo código. Um arquivo de **outro estabelecimento** (outro CNPJ, como matriz e filial) ou de **outra data** (o inventário do ano anterior) serve só como cadastro: o app não compara quantidades nem usa valores dele. Para gerar o SPED da matriz e o da filial, converta cada um sozinho.
 
 ## Segurança do painel
 
