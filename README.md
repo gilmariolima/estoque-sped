@@ -88,9 +88,36 @@ Estrutura:
 
 O conversor foi conferido com inventários reais (relatórios de inventário de matriz e filial com quase 8 mil itens, um `.FS` da Fortes, Estoque Escriturado e a Planilha Modelo): o total do SPED bateu com o total do relatório, a não ser quando o próprio relatório arredonda o total (aí vale a soma das linhas, que é o que o PVA exige no H005, e a diferença aparece nas pendências). Os casos que esses arquivos mostraram estão em `app/tests/arquivos` como cópias sintéticas, sem dados de cliente.
 
-No relatório de inventário o código e a descrição vêm na mesma coluna. O app separa pelos primeiros termos com número ou barra (`2022GSG/03 RELOGIO ...`), aceita um prefixo curto de letras (`BG 99100-003-A`, `GC 1999885`) e tira o traço entre os dois (`5095 - EXPOSITOR`). Linha sem código vira `SEMCOD0001`... e código repetido com outra descrição vira `<código>-2`: os dois casos vão para as pendências, para conferir com o cliente.
+No relatório de inventário o código e a descrição vêm na mesma coluna. O app separa pelos primeiros termos com número ou barra (`2022GSG/03 RELOGIO ...`), aceita um prefixo curto de letras (`BG 99100-003-A`, `GC 1999885`) e tira o traço entre os dois (`5095 - EXPOSITOR`). O "P/" de "para" fica na descrição, mesmo tendo barra (`PU11599JS/02 PULS.P/REL. PHALANX`). Sem número no começo, o código é o que vem antes de " - " (`BIP LITE BLACK - SMARTWATCH`) ou um termo curto com hífen (`MW-CX CAIXA EM ACO`). Códigos com espaço separados com segurança geram um aviso só para o arquivo; vão para as pendências do item os casos duvidosos (código antes do " - ", código grudado numa palavra, como `CX2038GSG/01CAIXA`). Linha sem código vira `SEMCOD0001`... e código repetido com outra descrição vira `<código>-2`: os dois casos também vão para as pendências, para conferir com o cliente.
 
 ## Observações fiscais
 
-- O período padrão do arquivo é o mês do inventário. Para o inventário de 31/12, confira se o arquivo deve ir na EFD de fevereiro e, se for o caso, informe o período (ex.: `02/2026`).
-- Itens em poder de terceiros ou de terceiros em poder do informante (IND_PROP 1 e 2) exigem COD_PART e o registro 0150, que o arquivo de entrada não traz: ficam como pendência.
+- O período padrão do arquivo é o **segundo mês depois do inventário**, como manda o Guia Prático: o inventário de 31/12/2025 vai na EFD de 02/2026 (e com o leiaute de 2026). Outro período pode ser informado, e aí uma pendência lembra a regra.
+- O arquivo leva só o inventário (bloco H), com a apuração (E110) zerada: não transmita como substituto de uma EFD que tem notas e apuração.
+- Só o motivo 01 (final do período) é gerado: os motivos 02 a 06 exigem o H020/H030 (CST, base e ICMS de cada item), que os arquivos de inventário não trazem.
+- Itens em poder de terceiros ou de terceiros em poder do informante (IND_PROP 1 e 2) saem com o COD_PART e o registro 0150 quando o participante é conhecido: pelo 0150 de um SPED de entrada ou por um CNPJ na coluna "Participante"/"CNPJ do terceiro" da planilha (o app consulta nome e município). Sem participante, o item fica fora do arquivo, que continua válido, e a pendência explica o porquê. A coluna "Qtd. em terceiros" vira um H010 próprio com IND_PROP 1.
+- Faltando CEP, endereço ou bairro (registro 0005), CRC do contabilista (0100), ou com município de outra UF, o arquivo sai com pendência: o PVA recusaria.
+
+## O que vira pendência
+
+O app nunca muda nem descarta um dado do cliente sem avisar. Vão para as pendências (e para o CSV ao lado do SPED):
+
+- linha sem código (entra como `SEMCOD0001`), linha de relatório que não casa com o formato, linha sem código nem descrição que tem números;
+- números ambíguos (`1.500` sem nenhum outro número com casas decimais no arquivo) e planilhas que misturam vírgula e ponto decimal;
+- código ou descrição com caractere que o ISO-8859-1 não tem, código cortado em 60 caracteres, unidade cortada em 6;
+- TIPO_ITEM fora da tabela, CEST sem 7 dígitos, NCM sem 8 dígitos, ICMS recuperável maior que o valor do item;
+- outra aba da planilha com inventário, itens do arquivo de complemento que não estão no inventário, SPED de entrada com mais de um H005;
+- total diferente de quantidade × unitário (fórmula errada na planilha): vale quantidade × unitário, e o item vai para as pendências;
+- descrição no limite de tamanho do relatório (cortada), "código" tirado do texto antes do " - " que aparece com descrições diferentes;
+- nome no arquivo diferente do nome do CNPJ na Receita (CNPJ digitado errado), inventário fora de 31/12 com o motivo 01;
+- unidades fora da tabela ou com duas siglas para a mesma unidade (PCT e PCTE), itens com tipo de indústria e Atividade "Outros".
+
+Avisos que valem para o arquivo todo (nenhum item com descrição, NCM faltando no comércio, quantidades arredondadas para 3 casas) aparecem uma vez só, e não em cada item: o filtro "Com pendência" mostra o que é de cada item.
+
+## Vários arquivos juntos
+
+O primeiro arquivo com quantidade e valor é o inventário (a estrela troca qual é); os outros completam descrição, NCM, unidade, tipo e valor pelo código. Um arquivo de **outro estabelecimento** (outro CNPJ, como matriz e filial) ou de **outra data** (o inventário do ano anterior) serve só como cadastro: o app não compara quantidades nem usa valores dele. Para gerar o SPED da matriz e o da filial, converta cada um sozinho.
+
+## Segurança do painel
+
+O painel escuta só em `127.0.0.1` e só atende quem tem o token da execução: o app desktop cria o token, passa ao motor pelo ambiente e abre a janela com ele, e o painel guarda num cookie `HttpOnly`/`SameSite=Strict`. Assim nem um site aberto no navegador nem outro usuário do mesmo computador (servidor de terminal) usa a porta. As respostas levam `Content-Security-Policy` (só scripts do próprio painel), e os nomes de arquivo recebidos nunca saem da pasta do lote ou da pasta `saida`.

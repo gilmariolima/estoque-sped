@@ -32,10 +32,11 @@ const temDados = (pasta) => fs.existsSync(pasta) && fs.readdirSync(pasta).some((
 /**
  * Traz os dados da instalação antiga (<antiga>\dados) para a pasta nova.
  * Só age se a antiga tem dados e a nova ainda não tem. Tenta mover (instantâneo, mesmo disco);
- * se não der (arquivo preso), copia e deixa a antiga onde está.
+ * se não der (arquivo preso), copia e deixa a antiga onde está. `mover` e `copiar` existem para
+ * os testes simularem a falha.
  * @returns {null | { de, para, modo: 'movido' | 'copiado' }}
  */
-function migrarDadosAntigos({ antiga, nova }) {
+function migrarDadosAntigos({ antiga, nova, mover = fs.renameSync, copiar = fs.cpSync }) {
   if (!antiga) return null
   const origem = path.join(antiga, 'dados')
   if (!temDados(origem) || temDados(nova)) return null
@@ -43,10 +44,21 @@ function migrarDadosAntigos({ antiga, nova }) {
   fs.mkdirSync(path.dirname(nova), { recursive: true })
   if (fs.existsSync(nova)) fs.rmSync(nova, { recursive: true, force: true }) // só tinha o log
   try {
-    fs.renameSync(origem, nova)
+    mover(origem, nova)
     return { de: origem, para: nova, modo: 'movido' }
   } catch {
-    fs.cpSync(origem, nova, { recursive: true, force: false, errorOnExist: false })
+    // Copia para uma pasta ao lado e só no fim dá o nome certo: uma cópia que para no meio
+    // (disco cheio, arquivo preso) não deixa a pasta nova pela metade, o que impediria a
+    // migração de rodar de novo na próxima abertura
+    const temp = `${nova}.migrando`
+    fs.rmSync(temp, { recursive: true, force: true })
+    try {
+      copiar(origem, temp, { recursive: true, force: false, errorOnExist: false })
+      fs.renameSync(temp, nova)
+    } catch (e) {
+      fs.rmSync(temp, { recursive: true, force: true })
+      throw e
+    }
     return { de: origem, para: nova, modo: 'copiado' }
   }
 }

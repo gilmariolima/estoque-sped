@@ -4,6 +4,7 @@
 // a página dele na janela. Fica separado do main.js para os testes rodarem sem o Electron.
 
 const { spawn, spawnSync } = require('node:child_process')
+const crypto = require('node:crypto')
 const fs = require('node:fs')
 const path = require('node:path')
 
@@ -34,14 +35,18 @@ function caminhoPython({ motor, plataforma = process.platform, env = process.env
 
 /**
  * Liga o painel e espera a linha "PORTA=<n>".
- * @returns {Promise<{ porta: number, url: string, processo: import('node:child_process').ChildProcess, parar: () => Promise<void> }>}
+ * O painel só atende quem tem o token desta execução (outro programa ou outro usuário do mesmo
+ * computador não consegue usar a porta): vai pelo ambiente, que só o próprio usuário enxerga.
+ * A janela abre `entrada` (/?t=<token>), e o painel guarda o token num cookie.
+ * @returns {Promise<{ porta: number, url: string, entrada: string, token: string, processo: import('node:child_process').ChildProcess, parar: () => Promise<void> }>}
  */
 function iniciarMotor({ python, motor, dados, log, espera = 30e3 }) {
   fs.mkdirSync(dados, { recursive: true })
+  const token = crypto.randomBytes(32).toString('base64url')
   const saidaLog = log ? fs.createWriteStream(log, { flags: 'a' }) : null
   const processo = spawn(python, [path.join(motor, 'painel.py'), '--porta', '0', '--sem-navegador'], {
     cwd: motor,
-    env: { ...process.env, ESTOQUE_DADOS: dados, PYTHONUNBUFFERED: '1', PYTHONIOENCODING: 'utf-8' },
+    env: { ...process.env, ESTOQUE_DADOS: dados, ESTOQUE_TOKEN: token, PYTHONUNBUFFERED: '1', PYTHONIOENCODING: 'utf-8' },
     windowsHide: true,
     stdio: ['ignore', 'pipe', 'pipe'],
   })
@@ -62,7 +67,9 @@ function iniciarMotor({ python, motor, dados, log, espera = 30e3 }) {
   const parar = async () => {
     if (vivo() && porta) {
       try {
-        await fetch(`http://127.0.0.1:${porta}/api/encerrar`, { method: 'POST', signal: AbortSignal.timeout(2000) })
+        await fetch(`http://127.0.0.1:${porta}/api/encerrar`, {
+          method: 'POST', headers: { 'X-Estoque-Token': token }, signal: AbortSignal.timeout(2000),
+        })
         await esperarSaida(3000)
       } catch {
         // painel travado: vai no kill
@@ -93,7 +100,8 @@ function iniciarMotor({ python, motor, dados, log, espera = 30e3 }) {
         pronto = true
         clearTimeout(relogio)
         porta = Number(m[1])
-        resolve({ porta, url: `http://127.0.0.1:${porta}`, processo, parar })
+        const url = `http://127.0.0.1:${porta}`
+        resolve({ porta, url, entrada: `${url}/?t=${token}`, token, processo, parar })
       }
     })
     processo.once('error', (e) => falhar(`Não foi possível abrir o Python (${python}): ${e.message}`))
