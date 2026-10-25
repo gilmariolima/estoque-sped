@@ -2,6 +2,8 @@
 
 Converte o inventário do cliente em **SPED Fiscal (EFD ICMS/IPI) com o bloco H**, pronto para importar no PVA.
 
+**Para instalar em qualquer computador:** baixe o instalador na [última versão](https://github.com/gilmariolima/estoque-sped/releases/latest) e siga o passo a passo em [INSTALAR.md](INSTALAR.md).
+
 Entradas aceitas (o tipo é reconhecido pelo conteúdo):
 
 - relatório **Registro de Inventário** em texto (colunas de largura fixa);
