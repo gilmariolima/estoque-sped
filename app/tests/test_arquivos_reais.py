@@ -192,7 +192,8 @@ class ModeloDePlanilha(unittest.TestCase):
             gs.converter(fonte, [], gs.opcoes(sem_consulta=True))
 
     def test_modelo_preenchido(self):
-        res, reg = gerar("modelo_preenchido.xlsx", uf="CE", cod_mun="2304400", ie="061234567")
+        res, reg = gerar("modelo_preenchido.xlsx", uf="CE", cod_mun="2304400", ie="061234567",
+                         cep="60000000", end="RUA UM", bairro="CENTRO")
         self.assertEqual(res.emp["nome"], "COMERCIAL EXEMPLO LTDA")  # lido da célula "Empresa:"
         self.assertEqual(res.emp["cnpj"], "12ABC34501DE35")
         self.assertEqual(f"{res.data_inv:%d/%m/%Y}", "31/12/2025")
@@ -200,6 +201,7 @@ class ModeloDePlanilha(unittest.TestCase):
         h010 = {c[1]: c for c in reg("H010")}
         self.assertEqual(h010["A-77"][2:6], ["PCT", "40,000", "6,789000", "271,56"])  # só o total; "Pacote"
         self.assertEqual([p for p in res.pendencias if p[0] != "arquivo"], [])
+        self.assertFalse([p for p in res.pendencias if "aba" in p[2]])  # a aba "Exemplo" do modelo não conta
 
 
 class CnpjAlfanumerico(unittest.TestCase):

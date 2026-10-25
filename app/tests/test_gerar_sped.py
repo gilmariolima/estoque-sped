@@ -92,12 +92,16 @@ class Planilha(unittest.TestCase):
 class Itens(unittest.TestCase):
     def test_um_0200_para_proprio_e_terceiros(self):
         p = arquivo("terc.txt", "|0000|019|0|01122025|31122025|LOJA X|11222333000181||CE|061234567|2304400||||A|1|\n"
+                                "|0150|F1|FORNECEDOR UM LTDA|1058|11444777000161|||2304400||RUA A|10||CENTRO|\n"
                                 "|H005|31122025|300,00|01|\n"
                                 "|H010|X1|UN|1,000|100,000000|100,00|0||||100,00|\n"
-                                "|H010|X1|UN|2,000|100,000000|200,00|1||||200,00|\n")
+                                "|H010|X1|UN|2,000|100,000000|200,00|1|F1|||200,00|\n")
         res, linhas = gerar(p)
         self.assertEqual(len(campos(linhas, "0200")), 1)
         self.assertEqual(len(campos(linhas, "H010")), 2)
+        self.assertEqual(campos(linhas, "H010")[1][7], "F1")
+        self.assertEqual(campos(linhas, "0150"), [["0150", "F1", "FORNECEDOR UM LTDA", "1058", "11444777000161", "", "",
+                                                   "2304400", "", "RUA A", "10", "", "CENTRO"]])
 
     def test_unitario_negativo_fica_fora(self):
         p = arquivo("neg.csv", "Codigo;Descricao;Quantidade;Valor Unit\nN1;X;3;-2,00\nN2;Y;1;5,00\n")
@@ -155,7 +159,9 @@ class Pendencias(unittest.TestCase):
         h010 = campos(linhas, "H010")[0]
         self.assertEqual(h010[3], "1670,341")
         self.assertEqual(h010[5], "3340,68")
-        self.assertTrue(any(c == "Q1" and "1670,3408 arredondada para 1670,341" in m for _, c, m in res.pendencias))
+        # um aviso só para o arquivo: o valor não muda, e não precisa ocupar o filtro "Com pendência"
+        self.assertTrue(any(t == "arquivo" and "Q1 1670,3408 -> 1670,341" in m for t, _, m in res.pendencias))
+        self.assertFalse(any(t == "item" for t, _, _ in res.pendencias))
 
     def test_csv_guarda_codigo_numerico_como_texto(self):
         # O Excel apagava o zero à esquerda: 0509 virava 509
@@ -189,7 +195,8 @@ class Datas(unittest.TestCase):
 class Painel(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
-        env = {**os.environ, "PYTHONUNBUFFERED": "1"}
+        cls.token = "token-de-teste"
+        env = {**os.environ, "PYTHONUNBUFFERED": "1", "ESTOQUE_TOKEN": cls.token}
         cls.proc = subprocess.Popen([sys.executable, str(APP / "painel.py"), "--porta", "0", "--sem-navegador"],
                                     stdout=subprocess.PIPE, text=True, env=env)
         linha = cls.proc.stdout.readline()
@@ -201,12 +208,15 @@ class Painel(unittest.TestCase):
         cls.proc.terminate()
         cls.proc.wait(5)
 
-    def pedir(self, metodo, rota, corpo=None, **cab):
+    def pedir(self, metodo, rota, corpo=None, token=True, resposta=False, **cab):
         c = http.client.HTTPConnection("127.0.0.1", self.porta, timeout=10)
         cab.setdefault("Host", f"127.0.0.1:{self.porta}")
+        if token:
+            cab.setdefault("X-Estoque-Token", self.token)
         c.request(metodo, rota, body=corpo, headers=cab)
         r = c.getresponse()
-        return r.status, r.read()
+        corpo = r.read()
+        return (r.status, corpo, r) if resposta else (r.status, corpo)
 
     def test_painel_abre(self):
         status, corpo = self.pedir("GET", "/")
@@ -266,6 +276,77 @@ class Painel(unittest.TestCase):
         self.assertIn(b"TV5500;TELEVISOR 55 POL;PC;85287200;;;2;2300,5;4601;0", corpo)
         status, _ = self.pedir("GET", "/api/gerados")
         self.assertEqual(status, 200)
+
+    def test_sem_token_recusa(self):
+        # Outro programa ou outro usuário do computador (servidor de terminal) acha a porta,
+        # mas não o token desta execução
+        for metodo, rota in (("GET", "/"), ("GET", "/api/escritorio"), ("GET", "/api/gerados"), ("POST", "/api/lote"),
+                             ("POST", "/api/encerrar"), ("DELETE", "/api/gerado/SPED_X.txt"), ("GET", "/baixar/x.txt")):
+            with self.subTest(rota=rota):
+                self.assertEqual(self.pedir(metodo, rota, token=False)[0], 401)
+                self.assertEqual(self.pedir(metodo, rota, token=False, **{"X-Estoque-Token": "errado"})[0], 401)
+        # os estáticos não têm dado nenhum e abrem sem token
+        self.assertEqual(self.pedir("GET", "/web/app.js", token=False)[0], 200)
+
+    def test_token_no_endereco_vira_cookie(self):
+        self.assertEqual(self.pedir("GET", "/?t=errado", token=False)[0], 401)
+        status, _, r = self.pedir("GET", f"/?t={self.token}", token=False, resposta=True)
+        self.assertEqual((status, r.getheader("Location")), (303, "/"))
+        cookie = r.getheader("Set-Cookie")
+        self.assertIn("HttpOnly", cookie)
+        self.assertIn("SameSite=Strict", cookie)
+        self.assertTrue(cookie.startswith(f"estoque_{self.porta}="))
+        status, corpo = self.pedir("GET", "/api/escritorio", token=False, Cookie=cookie.split(";")[0])
+        self.assertEqual(status, 200)
+
+    def test_cabecalhos_de_seguranca(self):
+        _, _, r = self.pedir("GET", "/", resposta=True)
+        self.assertIn("default-src 'self'", r.getheader("Content-Security-Policy"))
+        self.assertIn("frame-ancestors 'none'", r.getheader("Content-Security-Policy"))
+        self.assertEqual(r.getheader("X-Content-Type-Options"), "nosniff")
+
+    def test_content_length_negativo(self):
+        # read(-1) leria até a conexão fechar, sem o limite de tamanho
+        c = http.client.HTTPConnection("127.0.0.1", self.porta, timeout=10)
+        c.putrequest("POST", "/api/escritorio", skip_host=True)
+        for k, v in (("Host", f"127.0.0.1:{self.porta}"), ("X-Estoque-Token", self.token), ("Content-Length", "-1")):
+            c.putheader(k, v)
+        c.endheaders()
+        self.assertEqual(c.getresponse().status, 400)
+
+    def test_nomes_de_arquivo_nao_saem_da_pasta(self):
+        _, corpo = self.pedir("POST", "/api/lote")
+        lote = json.loads(corpo)["lote"]
+        for nome in ("..", "../../escritorio.json", "..%5C..%5Cx.txt", "CON", "a.csv.%20"):
+            with self.subTest(nome=nome):
+                status, corpo = self.pedir("POST", f"/api/enviar?lote={lote}&nome={nome}", b"x")
+                self.assertEqual(status, 200)
+                gravado = json.loads(corpo)["nome"]
+                self.assertNotIn("/", gravado)
+                self.assertNotIn("\\", gravado)
+                self.assertTrue(gravado.strip("."))
+        self.assertEqual(self.pedir("GET", "/baixar/..")[0], 404)
+        self.assertEqual(self.pedir("GET", "/api/ver/..")[0], 404)
+        self.assertEqual(self.pedir("POST", "/api/enviar?lote=../x&nome=a.txt", b"x")[0], 400)
+
+    def test_pendencias_do_item_e_itens_fora_pelo_painel(self):
+        _, corpo = self.pedir("POST", "/api/lote")
+        lote = json.loads(corpo)["lote"]
+        csv = "Codigo;Descricao;Qtd;Valor Unit;Valor Total\nA1;UM;1;1,00;1,00\nA1;DOIS;2;1,00;5,00\nA9;NEG;-1;1,00;-1,00\n".encode()
+        self.pedir("POST", f"/api/enviar?lote={lote}&nome=itens.csv", csv)
+        pedido = {"lote": lote, "arquivos": ["itens.csv"],
+                  "campos": {"data_inv": "31/12/2025", "cep": "60000-000", "end": "RUA A", "bairro": "CENTRO"}}
+        r = json.loads(self.pedir("POST", "/api/converter", json.dumps(pedido).encode())[1])
+        por = {i["c"]: i["p"] for i in r["itens"]}
+        self.assertEqual(por["A1"], [])
+        self.assertTrue(any("total do arquivo 5,00" in m for m in por["A1-2"]))
+        self.assertEqual([f["c"] for f in r["fora"]], ["A9"])
+        # o item que ficou fora vem com o que o arquivo trazia e o motivo, para a tela mostrar
+        self.assertEqual({k: r["fora"][0][k] for k in ("d", "q", "vu")}, {"d": "NEG", "q": "-1,000", "vu": "1,000000"})
+        self.assertTrue(any("negativo" in m for m in r["fora"][0]["p"]))
+        self.assertEqual((r["campos"]["cep"], r["campos"]["end"], r["campos"]["bairro"]), ("60000-000", "RUA A", "CENTRO"))
+        self.assertEqual(r["campos"]["periodo"], "02/2026")
+        self.assertIn("bloco H", r["resumo"]["conteudo"])
 
 
 if __name__ == "__main__":

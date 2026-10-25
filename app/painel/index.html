@@ -4,23 +4,24 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Estoque SPED</title>
-<meta name="theme-color" content="#1453a3">
+<meta name="theme-color" content="#1d34c9">
 <link rel="icon" href="/web/icone.svg?v=__ICONE__" type="image/svg+xml">
 <link rel="icon" href="/favicon.ico?v=__ICONE__" sizes="any">
 <link rel="manifest" href="/web/app.webmanifest?v=__ICONE__">
 <link rel="stylesheet" href="/web/vendor/fa/css/fontawesome.min.css">
 <link rel="stylesheet" href="/web/vendor/fa/css/solid.min.css">
-<link rel="stylesheet" href="/web/estilo.css?v=9">
+<link rel="stylesheet" href="/web/estilo.css?v=10">
 </head>
 <body>
-<header class="barra">
-  <div class="marca"><b>Estoque</b><span class="selo">SPED · Bloco H</span></div>
-</header>
-<nav class="abas">
-  <button class="navbtn ativo" data-aba="converter"><i class="fa-solid fa-file-import"></i>Converter</button>
-  <button class="navbtn" data-aba="gerados"><i class="fa-solid fa-box-archive"></i>Arquivos gerados <span class="cont" id="contGerados" hidden></span></button>
-  <button class="navbtn" data-aba="escritorio"><i class="fa-solid fa-user-tie"></i>Escritório</button>
-</nav>
+<div class="estrutura">
+<aside class="menu-lateral">
+  <div class="marca">Estoque<small>SPED Fiscal · Bloco H</small></div>
+  <nav>
+    <button class="navbtn ativo" data-aba="converter">Converter</button>
+    <button class="navbtn" data-aba="gerados">Arquivos gerados <span class="cont" id="contGerados" hidden></span></button>
+    <button class="navbtn" data-aba="escritorio">Escritório</button>
+  </nav>
+</aside>
 
 <main class="pagina">
   <!-- CONVERTER -->
@@ -31,9 +32,10 @@
         <p class="conta" id="contaConv">Nenhum arquivo</p>
       </div>
       <div class="filtros">
-        <button class="btn btn-ghost" id="btnNovo" hidden><i class="fa-solid fa-rotate-left"></i>Novo cliente</button>
-        <button class="btn btn-ghost" id="btnAdd"><i class="fa-solid fa-plus"></i>Adicionar arquivos</button>
-        <a class="btn btn-ghost" id="btnDominio" hidden title="produtos.txt no leiaute da Planilha Modelo, para importar o inventário no Domínio"><i class="fa-solid fa-file-export"></i>Baixar para o Domínio</a>
+        <button class="btn btn-ghost" id="btnNovo" hidden>Novo cliente</button>
+        <button class="btn btn-ghost" id="btnAdd">Adicionar arquivos</button>
+        <span class="espaco"></span>
+        <a class="btn btn-ghost" id="btnDominio" hidden title="produtos.txt no leiaute da Planilha Modelo, para importar o inventário no Domínio">Baixar para o Domínio</a>
         <a class="btn btn-primary" id="btnBaixar" hidden><i class="fa-solid fa-download"></i>Baixar SPED</a>
       </div>
     </div>
@@ -58,9 +60,9 @@
     <div class="erro-caixa" id="erroConv" hidden></div>
 
     <div class="resultado" id="resultado" hidden>
-      <aside class="via">
-        <div class="via-aba"><span>Dados do arquivo</span><span class="via-n">2ª via</span></div>
-        <div class="via-corpo">
+      <div class="duas">
+        <section>
+          <h2>Dados da empresa</h2>
           <form class="form-via" id="formEmp" autocomplete="off">
             <label class="larga"><span class="rot">Nome empresarial</span><input class="input" name="nome"></label>
             <label><span class="rot">CNPJ</span><input class="input" name="cnpj" autocapitalize="characters" spellcheck="false"></label>
@@ -68,7 +70,12 @@
             <label><span class="rot">UF</span><input class="input" name="uf" maxlength="2"></label>
             <label><span class="rot" title="Código IBGE do município, 7 dígitos">Município (IBGE)</span><input class="input" name="cod_mun" inputmode="numeric" maxlength="7"></label>
             <label><span class="rot">Data do inventário</span><input class="input" name="data_inv" placeholder="31/12/2025"></label>
-            <label><span class="rot" title="Mês da EFD. O inventário de 31/12 vai, por regra, na EFD de fevereiro.">Período (mês)</span><input class="input" name="periodo" placeholder="12/2025"></label>
+            <label><span class="rot" title="Mês da EFD. Pelo Guia Prático, o inventário vai na EFD do segundo mês depois dele: o de 31/12 vai na de fevereiro.">Período (mês)</span><input class="input" name="periodo" placeholder="automático"></label>
+            <label><span class="rot" title="CEP do estabelecimento (registro 0005)">CEP</span><input class="input" name="cep" inputmode="numeric" maxlength="9"></label>
+            <label class="larga"><span class="rot" title="Logradouro do estabelecimento (registro 0005)">Endereço</span><input class="input" name="end"></label>
+            <label><span class="rot">Número</span><input class="input" name="num" maxlength="10"></label>
+            <label><span class="rot">Complemento</span><input class="input" name="compl"></label>
+            <label><span class="rot">Bairro</span><input class="input" name="bairro"></label>
             <label><span class="rot">Perfil</span><select class="input" name="perfil"><option>A</option><option>B</option><option>C</option></select></label>
             <label><span class="rot">Atividade</span><select class="input" name="ind_ativ"><option value="1">Outros</option><option value="0">Industrial</option></select></label>
             <label class="larga"><span class="rot" title="Usado quando o arquivo não informa o tipo do item">Tipo do item (padrão)</span>
@@ -81,30 +88,35 @@
                 <option value="99">99 · Outras</option>
               </select></label>
           </form>
-          <div class="via-lado">
+        </section>
+        <aside>
+          <h2>Resumo</h2>
+          <div class="resumo-caixa">
             <div class="linhas" id="resumo"></div>
             <div class="avisos-via" id="gerais"></div>
             <div class="via-pe">
-              <button class="btn btn-ghost" id="btnGerar"><i class="fa-solid fa-rotate"></i>Gerar de novo</button>
-              <a class="btn btn-ghost" id="btnPend" hidden><i class="fa-solid fa-file-csv"></i>Pendências</a>
+              <button class="btn btn-azul" id="btnGerar">Gerar de novo</button>
+              <a class="btn btn-ghost" id="btnPend" hidden>Pendências (CSV)</a>
             </div>
           </div>
-        </div>
-      </aside>
+        </aside>
+      </div>
 
-      <div class="card">
+      <h2>Itens</h2>
+      <div>
         <div class="painel-tit">
           <div class="segs segs-p" id="segs">
             <button class="seg on" data-f="todos">Todos <b id="nTodos">0</b></button>
             <button class="seg" data-f="pend">Com pendência <b id="nPend">0</b></button>
+            <button class="seg" data-f="fora" id="segFora" hidden>Fora do arquivo <b id="nFora">0</b></button>
           </div>
-          <div class="busca" style="flex:1;max-width:340px"><i class="fa-solid fa-magnifying-glass"></i><input class="input" id="busca" placeholder="Código ou descrição"></div>
+          <div class="busca"><i class="fa-solid fa-magnifying-glass"></i><input class="input" id="busca" placeholder="Código ou descrição"></div>
         </div>
         <div class="tabela"><table>
           <thead><tr>
             <th class="th">Código</th><th class="th">Descrição</th><th class="th col-larga">NCM</th>
             <th class="th col-larga">Un.</th><th class="th direita">Quantidade</th>
-            <th class="th direita col-larga">Unitário</th><th class="th direita">Total</th><th class="th"></th>
+            <th class="th direita col-larga">Unitário</th><th class="th direita">Total</th><th class="th col-selo"></th>
           </tr></thead>
           <tbody id="listaItens"></tbody>
         </table></div>
@@ -121,7 +133,7 @@
         <p class="conta" id="contaGer"></p>
       </div>
       <div class="filtros">
-        <button class="btn btn-ghost" id="btnPasta"><i class="fa-solid fa-folder-open"></i>Abrir pasta</button>
+        <button class="btn btn-ghost" id="btnPasta">Abrir pasta</button>
       </div>
     </div>
     <div class="card">
@@ -156,13 +168,14 @@
       <label><span class="label">CEP</span><input class="input" name="cep" inputmode="numeric"></label>
       <label><span class="label">Telefone</span><input class="input" name="fone" inputmode="numeric"></label>
       <label><span class="label">Município (IBGE)</span><input class="input" name="cod_mun" inputmode="numeric" maxlength="7"></label>
-      <div class="pe"><button class="btn btn-primary" type="submit"><i class="fa-solid fa-floppy-disk"></i>Salvar</button></div>
+      <div class="pe"><button class="btn btn-azul" type="submit">Salvar</button></div>
     </form>
   </section>
 </main>
+</div>
 
 <div class="modal" id="modalVer" hidden>
-  <div class="modal-box" style="max-width:1100px">
+  <div class="modal-box">
     <div class="via-aba"><span id="verTit"></span><button class="fechar-x" data-fechar><i class="fa-solid fa-xmark"></i></button></div>
     <div class="ver-txt" id="verTxt"></div>
     <button class="mais" id="verMais" hidden></button>
@@ -172,6 +185,6 @@
 <div class="processando" id="processando" hidden><div><span class="spin"></span><span id="procTxt">Lendo arquivos…</span></div></div>
 <div class="toast-area" id="avisos"></div>
 
-<script src="/web/app.js?v=6"></script>
+<script src="/web/app.js?v=7"></script>
 </body>
 </html>
