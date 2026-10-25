@@ -1154,8 +1154,8 @@ def complementar(principal, extras, pendencias, codigos_gerados, participantes=N
         por_codigo[chave] = it
         finais.append(it)
 
-    # Nenhum item com descrição: o arquivo não tem cadastro (ex.: bloco H sem 0200). Um aviso só,
-    # para o filtro "Com pendência" continuar mostrando o que é de cada item
+    # Item sem descrição sai com "ITEM <código>" e fica com pendência (não é OK). Nenhum item com
+    # descrição: o arquivo não tem cadastro (ex.: bloco H sem 0200), e o aviso geral diz o que juntar
     sem_descricao = [it for it in finais if not it.descricao]
     if finais and len(sem_descricao) == len(finais):
         pendencias.append(("arquivo", principal.caminho.name, f"nenhum dos {len(finais)} itens tem descrição no arquivo: usado "
@@ -1164,8 +1164,8 @@ def complementar(principal, extras, pendencias, codigos_gerados, participantes=N
         p = it.pendencias.append
         if not it.descricao:
             it.descricao = f"ITEM {it.codigo}"
-            if len(sem_descricao) < len(finais):
-                p("sem descrição em nenhum arquivo: usado o próprio código")
+            p(f"sem descrição no arquivo: saiu \"{it.descricao}\". Clique no item para digitar a descrição "
+              "ou junte o cadastro do cliente")
         if ncm_valido(it.ncm):
             it.ncm = ncm_valido(it.ncm)
         elif it.ncm:

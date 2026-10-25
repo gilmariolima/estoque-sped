@@ -742,11 +742,12 @@ class Rodada2(Base):
         msgs = [m for t, c, m in res.pendencias if c == "ZEN LITE"]
         self.assertEqual(len(msgs), len(set(msgs)))
 
-    def test_arquivo_sem_nenhuma_descricao_vira_um_aviso_so(self):
+    def test_arquivo_sem_nenhuma_descricao_cada_item_fica_com_pendencia(self):
         txt = "|H005|31122025|30,00|01|\n|H010|A|UN|1,000|10,000000|10,00|0||||10,00|\n|H010|B|UN|2,000|10,000000|20,00|0||||20,00|\n"
         res = self.gerar(arquivo("sem0200.txt", txt))
-        self.assertTrue(self.pend(res, "nenhum dos 2 itens tem descrição", "arquivo"))
-        self.assertFalse(self.pend(res, "sem descrição", "item"))
+        self.assertTrue(self.pend(res, "nenhum dos 2 itens tem descrição", "arquivo"))  # o que juntar
+        self.assertEqual({c for t, c, m in res.pendencias if t == "item" and "sem descrição" in m}, {"A", "B"})
+        self.assertTrue(all(it.pendencias and it.descricao == f"ITEM {it.codigo}" for it in res.itens))
 
     def test_tipo_de_industria_sugere_a_atividade(self):
         p = arquivo("tipos.csv", "Codigo;Descricao;Qtd;Valor Unit;Tipo\nA1;TECIDO;1;1,00;01\nA2;BLUSA;1;1,00;04\n")
