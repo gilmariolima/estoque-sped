@@ -339,6 +339,9 @@ class Painel(unittest.TestCase):
         self.assertEqual(por["A1"], [])
         self.assertTrue(any("arredondada" in m for m in por["A1-2"]))
         self.assertEqual([f["c"] for f in r["fora"]], ["A9"])
+        # o item que ficou fora vem com o que o arquivo trazia e o motivo, para a tela mostrar
+        self.assertEqual({k: r["fora"][0][k] for k in ("d", "q", "vu")}, {"d": "NEG", "q": "-1,000", "vu": "1,000000"})
+        self.assertTrue(any("negativo" in m for m in r["fora"][0]["p"]))
         self.assertEqual((r["campos"]["cep"], r["campos"]["end"], r["campos"]["bairro"]), ("60000-000", "RUA A", "CENTRO"))
         self.assertEqual(r["campos"]["periodo"], "02/2026")
         self.assertIn("bloco H", r["resumo"]["conteudo"])

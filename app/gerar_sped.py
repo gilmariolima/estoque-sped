@@ -788,8 +788,14 @@ def consultar_cnpj(cnpj):
         "cod_mun": str(d.get("codigo_municipio_ibge") or ""), "cep": so_digitos(d.get("cep")),
         "end": endereco, "num": d.get("numero") or "", "compl": d.get("complemento") or "",
         "bairro": d.get("bairro") or "", "fone": so_digitos(d.get("ddd_telefone_1"))[:11],
-        "email": (d.get("email") or "").lower(),
+        "email": (d.get("email") or "").lower(), "cnae": str(d.get("cnae_fiscal") or ""),
     }
+
+
+def cnae_industrial(cnae):
+    """CNAE da indústria de transformação ou extrativa (divisões 05 a 33)."""
+    d = so_digitos(cnae).zfill(7) if so_digitos(cnae) else ""
+    return bool(d) and 5 <= int(d[:2]) <= 33
 
 
 def carregar_json(caminho):
@@ -843,6 +849,10 @@ def dados_empresa(fontes, args, pendencias):
     if not emp.get("fantasia"):
         emp["fantasia"] = do_arquivo.get("nome") or emp.get("nome", "")
     emp.setdefault("perfil", args.perfil_padrao)
+    # Atividade não informada: o CNAE do cadastro do CNPJ diz se é indústria
+    if not emp.get("ind_ativ") and cnae_industrial(emp.get("cnae")):
+        emp["ind_ativ"] = "0"
+        pendencias.append(("empresa", cnpj, f"CNAE {emp['cnae']} é de indústria: atividade marcada como industrial (registro 0002); confira"))
     emp.setdefault("ind_ativ", args.ind_ativ_padrao)
     # Campos obrigatórios do 0000 e do 0005 (CEP, endereço e bairro): sem eles o PVA recusa
     for k, msg in (("uf", "UF"), ("cod_mun", "código IBGE do município"), ("ie", "inscrição estadual"),
@@ -1050,6 +1060,38 @@ def complementar(principal, extras, pendencias, codigos_gerados, participantes=N
     return finais, fora
 
 
+# Unidades que não se dividem: quantidade com casas decimais nelas é erro de digitação ou de cadastro
+UNIDADES_INTEIRAS = {"UN", "UND", "UNID", "PC", "PCA", "PCS", "PCT", "PCTE", "PT", "CX", "PR", "JG", "KIT", "DZ", "CJ",
+                     "FD", "SC", "LA", "FR", "TB", "CT", "EMB", "BD", "GL", "BL", "BB"}
+
+
+def conferir_cadastro(itens, emp, args, pendencias):
+    """Avisos sobre o que o arquivo não traz e o app teve de supor: o tipo do item, o NCM e a
+    quantidade fracionada numa unidade que não se divide."""
+    industria = emp.get("ind_ativ") == "0"
+    for it in itens:
+        if it.qtd != it.qtd.to_integral_value() and it.unidade in UNIDADES_INTEIRAS:
+            msg = f"quantidade fracionada ({fmt(it.qtd, 3)}) na unidade {it.unidade}, que não se divide: confira a quantidade ou a unidade"
+            it.pendencias.append(msg)
+            pendencias.append(("item", it.codigo, msg))
+        if not it.ncm and industria:
+            msg = "sem NCM: na indústria o NCM é obrigatório no 0200"
+            it.pendencias.append(msg)
+            pendencias.append(("item", it.codigo, msg))
+    sem_ncm = [it.codigo for it in itens if not it.ncm]
+    if sem_ncm and not industria:
+        exemplos = ", ".join(sem_ncm[:5]) + ("..." if len(sem_ncm) > 5 else "")
+        pendencias.append(("arquivo", "NCM", f"{len(sem_ncm)} de {len(itens)} itens sem NCM ({exemplos}): o NCM é obrigatório no "
+                           "0200 para indústria, atacado e itens com substituição tributária; junte um cadastro com o NCM"))
+    sem_tipo = sum(1 for it in itens if not it.tipo)
+    if sem_tipo:
+        padrao = args.tipo_item.zfill(2)
+        alerta = (" A empresa é indústria: matéria-prima é 01 e produto acabado 04." if industria and padrao == "00" else
+                  " Se a empresa é indústria, marque Atividade Industrial e ajuste o tipo padrão.")
+        pendencias.append(("arquivo", "TIPO_ITEM", f"{sem_tipo} de {len(itens)} itens sem o tipo no arquivo: usado o tipo padrão "
+                           f"{padrao}.{alerta}"))
+
+
 def versao_leiaute(args, fim, pendencias):
     """COD_VER do 0000 pelo ano do fim do período."""
     if args.cod_ver:
@@ -1236,6 +1278,7 @@ def converter(principal, extras, args):
     terceiros = [it for it in principal.itens if it.ind_prop in ("1", "2")]
     participantes = participantes_usados(terceiros, [principal, *extras], args, pendencias) if terceiros else {}
     itens, fora = complementar(principal, extras, pendencias, gerados, participantes)
+    conferir_cadastro(itens, emp, args, pendencias)
     unidades = {}
     for f in [*extras, principal]:
         unidades.update(f.unidades)
