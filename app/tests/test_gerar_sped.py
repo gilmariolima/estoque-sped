@@ -349,5 +349,96 @@ class Painel(unittest.TestCase):
         self.assertIn("bloco H", r["resumo"]["conteudo"])
 
 
+class PainelCorrecoes(unittest.TestCase):
+    """Corrigir um item no painel: a correção entra no SPED, soma com as anteriores, fica guardada
+    para a empresa (só cadastro) e pode ser desfeita."""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.token = "token-de-teste"
+        cls.dados = tempfile.TemporaryDirectory()
+        env = {**os.environ, "PYTHONUNBUFFERED": "1", "ESTOQUE_TOKEN": cls.token, "ESTOQUE_DADOS": cls.dados.name}
+        cls.proc = subprocess.Popen([sys.executable, str(APP / "painel.py"), "--porta", "0", "--sem-navegador"],
+                                    stdout=subprocess.PIPE, text=True, env=env)
+        linha = cls.proc.stdout.readline()
+        assert linha.startswith("PORTA="), linha
+        cls.porta = int(linha.split("=")[1])
+
+    @classmethod
+    def tearDownClass(cls):
+        cls.proc.terminate()
+        cls.proc.wait(5)
+        cls.dados.cleanup()
+
+    pedir = Painel.pedir
+
+    def json(self, rota, dados):
+        status, corpo = self.pedir("POST", rota, json.dumps(dados).encode())
+        return status, json.loads(corpo)
+
+    def novo_lote(self):
+        lote = json.loads(self.pedir("POST", "/api/lote")[1])["lote"]
+        xls = (APP / "tests" / "arquivos" / "cod_produto_antigo.xls").read_bytes()
+        self.pedir("POST", f"/api/enviar?lote={lote}&nome=estoque.xls", xls)
+        return lote
+
+    def converter(self, lote):
+        _, r = self.json("/api/converter", {"lote": lote, "arquivos": ["estoque.xls"], "campos": {
+            "cnpj": "11.222.333/0001-81", "uf": "CE", "cod_mun": "2304400", "data_inv": "31/12/2025"}})
+        self.assertNotIn("erro", r)
+        return {i["c"]: i for i in r["itens"]}, r
+
+    def ajustar(self, lote, chave, campos):
+        return self.json("/api/ajustar", {"lote": lote, "chave": chave, "campos": campos, "cnpj": "11222333000181"})
+
+    def test_corrige_soma_guarda_e_desfaz(self):
+        lote = self.novo_lote()
+        itens, _ = self.converter(lote)
+        caixa = itens["20"]
+        self.assertTrue(any("fracionada" in p for p in caixa["p"]))  # 3,5 CX
+        self.assertEqual(caixa["a"], [])
+
+        self.assertEqual(self.ajustar(lote, caixa["k"], {"qtd": "4", "ncm": "7318.15.00"}), (200, {"ok": True}))
+        itens, r = self.converter(lote)
+        self.assertEqual((itens["20"]["q"], itens["20"]["vt"], itens["20"]["n"]), ("4,000", "49,33", "73181500"))
+        self.assertEqual(itens["20"]["p"], [])  # a quantidade inteira resolveu a pendência
+        self.assertEqual(sorted(itens["20"]["a"]), ["ncm", "qtd"])
+        sped = self.pedir("GET", f"/baixar/{r['arquivo']}")[1].decode("latin-1")
+        self.assertIn("|H010|20|CX|4,000|12,333333|49,33|0||||49,33|", sped)
+        self.assertIn("|0200|20|PARAFUSO 3/8|||CX|00|73181500|", sped)
+
+        # Segunda correção do mesmo item: soma com a primeira
+        self.ajustar(lote, caixa["k"], {"descricao": "PARAFUSO SEXTAVADO 3/8"})
+        itens, _ = self.converter(lote)
+        self.assertEqual((itens["20"]["d"], itens["20"]["q"], itens["20"]["n"]), ("PARAFUSO SEXTAVADO 3/8", "4,000", "73181500"))
+
+        # Outro inventário da mesma empresa: vale o cadastro corrigido, não a quantidade
+        outro = self.novo_lote()
+        itens, _ = self.converter(outro)
+        self.assertEqual((itens["20"]["d"], itens["20"]["n"], itens["20"]["q"]), ("PARAFUSO SEXTAVADO 3/8", "73181500", "3,500"))
+        self.assertEqual(sorted(itens["20"]["a"]), ["descricao", "ncm"])
+
+        # Desfazer volta o que veio do arquivo, aqui e nos próximos inventários
+        self.ajustar(lote, caixa["k"], {})
+        for l in (lote, outro):
+            itens, _ = self.converter(l)
+            self.assertEqual((itens["20"]["d"], itens["20"]["n"], itens["20"]["q"], itens["20"]["a"]), ("PARAFUSO 3/8", "", "3,500", []))
+        guardadas = json.loads((Path(self.dados.name) / "ajustes.json").read_text(encoding="utf-8"))
+        self.assertNotIn(caixa["k"], guardadas.get("11222333000181", {}))
+
+    def test_correcao_invalida(self):
+        lote = self.novo_lote()
+        itens, _ = self.converter(lote)
+        self.assertEqual(self.ajustar(lote, "../../x", {"ncm": "1"})[0], 400)
+        self.assertEqual(self.ajustar(lote, itens["21"]["k"], ["ncm"])[0], 400)
+        self.assertEqual(self.ajustar("../x", itens["21"]["k"], {"ncm": "1"})[0], 400)
+        # Valor que não é número e NCM curto: o app avisa, não quebra
+        self.ajustar(lote, itens["21"]["k"], {"vl_unit": "abc", "ncm": "123", "campo_qualquer": "x"})
+        itens, _ = self.converter(lote)
+        self.assertTrue(any("não é um número" in p for p in itens["21"]["p"]))
+        self.assertTrue(any("não tem 8 dígitos" in p for p in itens["21"]["p"]))
+        self.assertEqual(itens["21"]["vt"], "81,50")
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -17,6 +17,7 @@ import calendar
 import collections
 import csv
 import dataclasses
+import hashlib
 import io
 import itertools
 import json
@@ -91,6 +92,8 @@ class Item:
     aliases: set = field(default_factory=set)
     origem: str = ""
     pendencias: list = field(default_factory=list)  # avisos do item, com o código final no fim
+    chave: str = ""  # identifica o item do arquivo entre uma conversão e outra (correções do painel)
+    ajustado: list = field(default_factory=list)  # campos corrigidos no painel
 
 
 @dataclass
@@ -979,6 +982,46 @@ def total_confere(qtd, vl_unit, vl_item):
     return abs(vl_item / qtd - vl_unit) <= Decimal(5).scaleb(-casas - 1)
 
 
+# Campos que o painel deixa corrigir. Os de cadastro valem também nos próximos inventários
+# da empresa; quantidade e valor são só deste inventário.
+AJUSTES_CADASTRO = ("descricao", "ncm", "unidade", "tipo")
+AJUSTES = (*AJUSTES_CADASTRO, "qtd", "vl_unit")
+
+
+def chave_item(it):
+    """O mesmo item do mesmo arquivo dá sempre a mesma chave: é o que o arquivo trouxe,
+    antes de o app completar ou renomear (o código final pode mudar de uma conversão a outra)."""
+    base = "\x1f".join(str(v or "").strip().upper() for v in (it.codigo, it.descricao, it.ind_prop, it.cod_part, it.origem if not it.codigo else ""))
+    return hashlib.sha1(base.encode("utf-8")).hexdigest()[:16]
+
+
+def aplicar_ajustes(itens, ajustes):
+    """Correções feitas no painel ({chave: {campo: valor}}), antes de completar e conferir os itens:
+    as conferências do app rodam de novo sobre o valor corrigido."""
+    for it in itens:
+        it.chave = chave_item(it)
+        for campo, valor in (ajustes or {}).get(it.chave, {}).items():
+            valor = str(valor if valor is not None else "").strip()
+            if campo not in AJUSTES or not valor:
+                continue
+            if campo in ("qtd", "vl_unit"):
+                numero = num(valor, br=True)  # digitado no painel: vírgula decimal, "1.000" é mil
+                if numero is None:
+                    it.pendencias.append(f"correção do painel ignorada: \"{valor}\" não é um número válido")
+                    continue
+                setattr(it, campo, numero)
+                # Quantidade ou unitário corrigido: o total passa a ser quantidade × unitário
+                if it.vl_unit is not None:
+                    it.vl_item = None
+            elif campo == "tipo":
+                it.tipo = valor.zfill(2) if valor.isdigit() else valor
+            elif campo == "unidade":
+                it.unidade = valor.upper()
+            else:
+                setattr(it, campo, valor)
+            it.ajustado.append(campo)
+
+
 def complementar(principal, extras, pendencias, codigos_gerados, participantes=None, so_cadastro=()):
     """Itens que entram no arquivo (e os que ficaram fora). As pendências de cada item ficam
     nele (it.pendencias) e vão para a lista geral no fim, já com o código final do item.
@@ -1433,6 +1476,7 @@ def converter(principal, extras, args):
     emp = dados_empresa(mesmo_estab, args, pendencias)
     terceiros = [it for it in principal.itens if it.ind_prop in ("1", "2")]
     participantes = participantes_usados(terceiros, [principal, *extras], args, pendencias) if terceiros else {}
+    aplicar_ajustes(principal.itens, getattr(args, "ajustes", None))
     itens, fora = complementar(principal, extras, pendencias, gerados, participantes, so_cadastro)
     unidades = {}
     for f in [*extras, principal]:

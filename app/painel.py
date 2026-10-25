@@ -32,6 +32,7 @@ PASTA = Path(__file__).resolve().parent
 WEB = PASTA / "painel"
 SAIDA = gs.DADOS / "saida"
 ENTRADAS = gs.DADOS / "entradas"
+AJUSTES_EMPRESAS = gs.DADOS / "ajustes.json"  # correções de cadastro de cada empresa (CNPJ), para os próximos inventários
 TIPOS = {".html": "text/html; charset=utf-8", ".css": "text/css; charset=utf-8", ".js": "text/javascript; charset=utf-8",
          ".svg": "image/svg+xml", ".png": "image/png", ".ico": "image/x-icon", ".woff2": "font/woff2",
          ".ttf": "font/ttf", ".webmanifest": "application/manifest+json"}
@@ -89,6 +90,60 @@ def resumo_fonte(caminho):
         return None, {"nome": caminho.name, "erro": str(e)}
 
 
+def gravar_json(caminho, dados):
+    caminho.parent.mkdir(parents=True, exist_ok=True)
+    temp = caminho.with_suffix(".tmp")
+    temp.write_text(json.dumps(dados, ensure_ascii=False, indent=2), encoding="utf-8")
+    temp.replace(caminho)
+
+
+def cnpj_dos_arquivos(principal, extras, campos):
+    return gs.so_cnpj(campos.get("cnpj") or principal.empresa.get("cnpj")
+                      or next((f.empresa.get("cnpj") for f in extras if f.empresa.get("cnpj")), ""))
+
+
+def ajustes_do_lote(pasta, cnpj):
+    """Correções que valem nesta conversão: as de cadastro salvas da empresa e, por cima, as deste lote."""
+    ajustes = {k: dict(v) for k, v in gs.carregar_json(AJUSTES_EMPRESAS).get(cnpj, {}).items()} if cnpj else {}
+    for chave, campos in gs.carregar_json(pasta / "ajustes.json").items():
+        ajustes.setdefault(chave, {}).update(campos)
+    return ajustes
+
+
+def ajustar(dados):
+    """Guarda a correção de um item, somada às que ele já tinha, ou desfaz todas (campos vazio).
+    Quantidade e valor ficam só no lote; descrição, NCM, unidade e tipo ficam também no
+    cadastro da empresa, para os próximos inventários dela."""
+    pasta = pasta_lote(dados.get("lote"))
+    chave = str(dados.get("chave") or "")
+    if not re.fullmatch(r"[0-9a-f]{16}", chave):
+        raise PedidoInvalido("item inválido")
+    campos = dados.get("campos") or {}
+    if not isinstance(campos, dict):
+        raise PedidoInvalido("correção inválida")
+    campos = {k: str(v).strip()[:200] for k, v in campos.items() if k in gs.AJUSTES and v is not None and str(v).strip()}
+    cnpj = gs.so_cnpj(dados.get("cnpj"))
+    with trava:
+        lote = gs.carregar_json(pasta / "ajustes.json")
+        if campos:
+            lote[chave] = {**lote.get(chave, {}), **campos}
+        else:
+            lote.pop(chave, None)
+        gravar_json(pasta / "ajustes.json", lote)
+        if cnpj and gs.cnpj_valido(cnpj):
+            todas = gs.carregar_json(AJUSTES_EMPRESAS)
+            empresa = todas.setdefault(cnpj, {})
+            cadastro = {k: v for k, v in campos.items() if k in gs.AJUSTES_CADASTRO}
+            if cadastro:
+                empresa[chave] = {**empresa.get(chave, {}), **cadastro}
+            elif not campos:
+                empresa.pop(chave, None)
+            if not empresa:
+                todas.pop(cnpj)
+            gravar_json(AJUSTES_EMPRESAS, todas)
+    return {"ok": True}
+
+
 def campos_conhecidos(principal, extras, campos, args):
     """Dados da empresa e do inventário que já se sabem sem conseguir gerar o arquivo:
     o que foi digitado, o que veio nos arquivos e o cadastro salvo da empresa."""
@@ -132,6 +187,7 @@ def converter(dados):
         periodo=campos.get("periodo") or None, data_inv=campos.get("data_inv") or None,
         tipo_item=campos.get("tipo_item") or "00",
         **{k: campos.get(k) or None for k in ("cep", "end", "num", "compl", "bairro")},
+        ajustes=ajustes_do_lote(pasta, cnpj_dos_arquivos(principal, extras, campos)),
     )
     with trava:
         cnpj = gs.so_cnpj(campos.get("cnpj"))
@@ -158,12 +214,13 @@ def converter(dados):
         itens.append({
             "c": it.codigo, "d": it.descricao, "n": it.ncm, "u": it.unidade,
             "q": gs.fmt(it.qtd, 3), "vu": gs.fmt(it.vl_unit, 6), "vt": gs.fmt(vl_item, 2),
-            "t": it.tipo or args.tipo_item, "p": list(it.pendencias),
+            "t": it.tipo or args.tipo_item, "p": list(it.pendencias), "k": it.chave, "a": list(it.ajustado),
         })
     # Itens que ficaram fora: com os números que vieram no arquivo e o motivo, para a tela mostrar
     numero = lambda v, casas: gs.fmt(v, casas) if v is not None else ""
     fora = [{"c": it.codigo, "d": it.descricao or "(sem descrição no arquivo)", "n": it.ncm, "u": it.unidade, "q": numero(it.qtd, 3),
-             "vu": numero(it.vl_unit, 6), "vt": numero(it.vl_item, 2), "p": list(it.pendencias)} for it in res.fora]
+             "vu": numero(it.vl_unit, 6), "vt": numero(it.vl_item, 2), "t": it.tipo, "p": list(it.pendencias),
+             "k": it.chave, "a": list(it.ajustado)} for it in res.fora]
     emp = res.emp
     return {
         "arquivos": arquivos,
@@ -360,6 +417,8 @@ class Painel(BaseHTTPRequestHandler):
                 return self.responder({"nome": destino.name})
             if rota == "/api/converter":
                 return self.responder(converter(json.loads(self.corpo() or b"{}")))
+            if rota == "/api/ajustar":
+                return self.responder(ajustar(json.loads(self.corpo() or b"{}")))
             if rota == "/api/encerrar":  # usado pelo instalador antes de trocar os arquivos
                 self.responder({"ok": True})
                 threading.Thread(target=self.server.shutdown, daemon=True).start()

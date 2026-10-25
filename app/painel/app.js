@@ -171,8 +171,9 @@ function desenharItens() {
   const motivos = (i) => (estado.filtro === "todos" ? [] : i.p).map((m) => `<span class="motivo">${esc(m)}</span>`).join("");
   const carimbo = (i) => fora ? `<span class="carimbo c-recus" title="${esc(i.p.join("\n"))}">Fora</span>`
     : i.p.length ? `<span class="carimbo c-pend" title="${esc(i.p.join("\n"))}">Pendência</span>`
+    : i.a.length ? `<span class="carimbo c-ajust" title="Corrigido no painel">Corrigido</span>`
     : `<span class="carimbo c-ok">OK</span>`;
-  $("#listaItens").innerHTML = mostra.length ? mostra.map((i) => `<tr>
+  $("#listaItens").innerHTML = mostra.length ? mostra.map((i) => `<tr class="editavel" data-chave="${esc(i.k)}" title="Clique para corrigir">
       <td class="td canhoto"><span class="codigo">${esc(i.c)}</span></td>
       <td class="td d-col">${esc(i.d)}${motivos(i)}</td>
       <td class="td col-larga">${esc(i.n)}</td>
@@ -181,8 +182,9 @@ function desenharItens() {
       <td class="td direita col-larga carbono">${esc(milhar(i.vu))}</td>
       <td class="td direita carbono">${esc(milhar(i.vt))}</td>
       <td class="td col-selo">${carimbo(i)}</td>
+      <td class="td col-editar"><button class="icon-btn" type="button" tabindex="-1" aria-label="Corrigir"><i class="fa-solid fa-pen"></i></button></td>
     </tr>`).join("")
-    : `<tr><td colspan="8" class="vazio-lista"><i class="fa-solid fa-magnifying-glass"></i><br>Nenhum item</td></tr>`;
+    : `<tr><td colspan="9" class="vazio-lista"><i class="fa-solid fa-magnifying-glass"></i><br>Nenhum item</td></tr>`;
   const resto = lista.length - mostra.length;
   $("#maisItens").hidden = resto <= 0;
   $("#maisItens").textContent = `Mostrar mais ${milhar(Math.min(resto, POR_PAGINA))} de ${milhar(resto)}`;
@@ -286,6 +288,62 @@ document.addEventListener("drop", (e) => {
   if (!$("#aba-converter").hidden && e.dataTransfer.files.length) enviar(e.dataTransfer.files);
 });
 
+/* ---------------- corrigir item ---------------- */
+const CAMPOS_ITEM = ["descricao", "ncm", "unidade", "tipo", "qtd", "vl_unit"];
+let itemAberto = null;
+$("#formItem").elements.tipo.innerHTML = $("#formEmp").elements.tipo_item.innerHTML;
+
+function abrirItem(chave) {
+  const r = estado.res;
+  const i = [...r.itens, ...(r.fora || [])].find((x) => x.k === chave);
+  if (!i) return;
+  const f = $("#formItem");
+  // O que aparece no formulário é o valor atual; só o que mudar vira correção
+  const atuais = { descricao: i.d === "(sem descrição no arquivo)" ? "" : i.d, ncm: i.n, unidade: i.u,
+    tipo: i.t || r.campos.tipo_item || "00", qtd: milhar(i.q), vl_unit: milhar(i.vu) };
+  itemAberto = { chave, atuais };
+  CAMPOS_ITEM.forEach((k) => (f.elements[k].value = atuais[k] ?? ""));
+  $("#itemCod").textContent = i.c;
+  $("#itemPend").innerHTML = i.p.map((m) => `<p><i class="fa-solid fa-triangle-exclamation"></i><span>${esc(m)}</span></p>`).join("");
+  $("#itemDesfazer").hidden = !i.a.length;
+  $("#modalItem").hidden = false;
+  // O cursor vai para o campo da primeira pendência
+  const pend = i.p.join(" ");
+  const campo = [[/NCM/, "ncm"], [/sem quantidade|fracionada|quantidade zero/, "qtd"], [/sem valor|unitário|negativo/, "vl_unit"],
+    [/unidade/, "unidade"], [/tipo do item/, "tipo"]].find(([re]) => re.test(pend));
+  f.elements[campo ? campo[1] : "descricao"].focus();
+}
+
+async function salvarItem(campos) {
+  const r = await api("/api/ajustar", {
+    method: "POST", headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ lote: estado.lote, chave: itemAberto.chave, campos, cnpj: $("#formEmp").elements.cnpj.value }),
+  });
+  if (r.erro) return aviso(r.erro, "erro");
+  $("#modalItem").hidden = true;
+  await converter("Gerando de novo com a correção…");
+  if (!estado.res?.erro) aviso(Object.keys(campos).length ? "Item corrigido e SPED gerado de novo" : "Correção desfeita");
+}
+
+$("#listaItens").addEventListener("click", (e) => {
+  const tr = e.target.closest("tr[data-chave]");
+  if (tr && !window.getSelection().toString()) abrirItem(tr.dataset.chave);
+});
+$("#formItem").addEventListener("submit", (e) => {
+  e.preventDefault();
+  const f = e.target;
+  const campos = {};
+  CAMPOS_ITEM.forEach((k) => {
+    const v = f.elements[k].value.trim();
+    if (v && v !== String(itemAberto.atuais[k] ?? "")) campos[k] = v;
+  });
+  // Nada mudou: fecha sem gerar de novo (as correções já salvas continuam)
+  if (!Object.keys(campos).length) { $("#modalItem").hidden = true; return; }
+  salvarItem(campos);
+});
+$("#itemDesfazer").addEventListener("click", () => salvarItem({}));
+$("#modalItem").addEventListener("click", (e) => { if (e.target.id === "modalItem" || e.target.closest("[data-fechar]")) $("#modalItem").hidden = true; });
+
 /* ---------------- arquivos gerados ---------------- */
 let gerados = [];
 async function atualizarContaGerados() {
@@ -360,7 +418,7 @@ async function verArquivo(nome, de = 0) {
 }
 $("#verMais").addEventListener("click", () => verArquivo(verAtual.nome, verAtual.de));
 $("#modalVer").addEventListener("click", (e) => { if (e.target.id === "modalVer" || e.target.closest("[data-fechar]")) $("#modalVer").hidden = true; });
-document.addEventListener("keydown", (e) => { if (e.key === "Escape") { $("#modalVer").hidden = true; fecharMenu(); } });
+document.addEventListener("keydown", (e) => { if (e.key === "Escape") { $("#modalVer").hidden = true; $("#modalItem").hidden = true; fecharMenu(); } });
 
 $("#btnPasta").addEventListener("click", async () => {
   const r = await api("/api/abrir-pasta", { method: "POST" });

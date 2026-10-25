@@ -1,6 +1,6 @@
 {
   "name": "estoque-sped",
-  "version": "1.1.0",
+  "version": "1.2.0",
   "private": true,
   "description": "Converte o inventário do cliente em SPED Fiscal (EFD ICMS/IPI) com o bloco H.",
   "type": "commonjs",
@@ -12,7 +12,7 @@
     "app": "electron .",
     "preparar-python": "node scripts/preparar-python.js",
     "test": "node --test && node scripts/python.js -m unittest discover -s tests",
-    "pacote": "node scripts/preparar-python.js && electron-builder --win --x64"
+    "pacote": "node scripts/preparar-python.js && electron-builder --win --x64 --publish never"
   },
   "author": "Gilmario Lima",
   "devDependencies": {
@@ -72,6 +72,17 @@
       ],
       "icon": "app/painel/icone.png",
       "category": "Office"
-    }
+    },
+    "publish": [
+      {
+        "provider": "github",
+        "owner": "gilmariolima",
+        "repo": "estoque-sped",
+        "releaseType": "release"
+      }
+    ]
+  },
+  "dependencies": {
+    "electron-updater": "^6.8.11"
   }
 }
