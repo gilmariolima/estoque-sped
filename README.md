@@ -121,7 +121,7 @@ O app nunca muda nem descarta um dado do cliente sem avisar. Vão para as pendê
 - nome no arquivo diferente do nome do CNPJ na Receita (CNPJ digitado errado), inventário fora de 31/12 com o motivo 01;
 - unidades fora da tabela ou com duas siglas para a mesma unidade (PCT e PCTE), itens com tipo de indústria e Atividade "Outros".
 
-Avisos que valem para o arquivo todo (nenhum item com descrição, NCM faltando no comércio, quantidades arredondadas para 3 casas) aparecem uma vez só, e não em cada item: o filtro "Com pendência" mostra o que é de cada item.
+Avisos que valem para o arquivo todo (NCM faltando no comércio, quantidades arredondadas para 3 casas) aparecem uma vez só, e não em cada item: o filtro "Com pendência" mostra o que é de cada item. Item sem descrição sai como `ITEM <código>` e fica sempre com pendência; se nenhum item do arquivo tem descrição, um aviso geral também pede o cadastro do cliente.
 
 ## Corrigir um item no painel
 
