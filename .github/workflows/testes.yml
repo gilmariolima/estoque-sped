@@ -1,0 +1,30 @@
+# Roda todos os testes (motor em Python e Electron) a cada pull request e a cada mudança na main.
+# O workflow "Publicar versão" também chama este antes de gerar o instalador.
+name: Testes
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+  workflow_call:
+
+permissions:
+  contents: read
+
+jobs:
+  testes:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      # As mesmas versões que vão no Python embutido do instalador (scripts/preparar-python.js)
+      - run: pip install openpyxl==3.1.5 et_xmlfile==2.0.0 xlrd==2.0.1
+      - run: npm ci
+      - run: npm test

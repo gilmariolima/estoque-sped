@@ -50,7 +50,9 @@ Os arquivos gerados também ficam na aba **Arquivos gerados**.
 
 ## Atualizar para uma versão nova
 
-Baixe o instalador novo (passo 1) e instale por cima (passo 2). O instalador fecha o Estoque SPED aberto, troca o programa e **mantém** os cadastros das empresas, os dados do escritório e os arquivos gerados.
+A partir da versão 1.2.0 é automático: ao abrir, o Estoque SPED baixa a versão nova sozinho e pergunta se quer **Reiniciar agora**. Se escolher **Depois**, ela é instalada quando você fechar o programa.
+
+Sem internet, ou numa versão anterior à 1.2.0: baixe o instalador novo (passo 1) e instale por cima (passo 2). O instalador fecha o Estoque SPED aberto, troca o programa e **mantém** os cadastros das empresas, os dados do escritório e os arquivos gerados.
 
 ## Onde ficam os dados
 
