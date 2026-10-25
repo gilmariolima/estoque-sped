@@ -639,6 +639,9 @@ class Conferencias(Base):
         self.assertFalse(self.pend(self.gerar(p), "sem o tipo no arquivo"))
         res = self.gerar(p, ind_ativ="0")
         self.assertEqual(len(self.pend(res, "1 de 2 itens sem o tipo no arquivo: usado o tipo padrão 00", "arquivo")), 1)
+        # tipo de indústria escolhido numa empresa de comércio: o aviso diz o que fazer
+        res = self.gerar(p, tipo_item="04")
+        self.assertTrue(self.pend(res, "O tipo 04 (Produto acabado) é de indústria, mas a Atividade está como Outros", "arquivo"))
 
     def test_cnae_de_industria_marca_a_atividade(self):
         self.assertTrue(gs.cnae_industrial("1412601"))  # confecção de roupas
