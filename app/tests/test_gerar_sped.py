@@ -138,6 +138,34 @@ class Relatorio(unittest.TestCase):
             self.assertEqual(n, sum(l.startswith(f"|{reg}|") for l in linhas), reg)
         self.assertEqual(int(campos(linhas, "9999")[0][1]), len(linhas))
 
+    def test_linha_de_item_que_nao_casa_vira_pendencia(self):
+        # Linha de outro formato (sem unidade, total com ponto) não pode sumir calada
+        quebrado = RELATORIO.replace("PC       2,000    2.300,5000      4.601,00", "2,000    2.300,5000      4601.00")
+        res, linhas = gerar(arquivo("rel_quebrado.txt", quebrado.format(titulo="Registro de Inventário")),
+                            uf="CE", cod_mun="2304400")
+        self.assertEqual(len(campos(linhas, "H010")), 1)
+        self.assertTrue(any(t == "arquivo" and "linha não lida" in m and "TV5500" in m for t, _, m in res.pendencias))
+
+
+class Pendencias(unittest.TestCase):
+    def test_quantidade_com_4_casas_avisa_e_mantem_o_valor(self):
+        p = arquivo("qtd4.csv", "Codigo;Descricao;Unidade;Quantidade;Valor Unitario;Valor Total\n"
+                                "Q1;TECIDO;M;1670,3408;2,00;3340,68\n")
+        res, linhas = gerar(p, data_inv="31/12/2025")
+        h010 = campos(linhas, "H010")[0]
+        self.assertEqual(h010[3], "1670,341")
+        self.assertEqual(h010[5], "3340,68")
+        self.assertTrue(any(c == "Q1" and "1670,3408 arredondada para 1670,341" in m for _, c, m in res.pendencias))
+
+    def test_csv_guarda_codigo_numerico_como_texto(self):
+        # O Excel apagava o zero à esquerda: 0509 virava 509
+        p = arquivo("zero.csv", "Codigo;Descricao;Unidade;Quantidade;Valor Unitario\n"
+                                "0509;RELOGIO;UN;0;10,00\n0600;PULSEIRA;UN;2;5,00\n")
+        res, _ = gerar(p, data_inv="31/12/2025")
+        gs.gravar(res, Path(TMP) / "saida-csv")
+        csv = (Path(TMP) / "saida-csv" / f"{res.base}_pendencias.csv").read_text(encoding="utf-8-sig")
+        self.assertIn('"=""0509"""', csv)
+
 
 class Datas(unittest.TestCase):
     def setUp(self):

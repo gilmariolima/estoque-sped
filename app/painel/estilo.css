@@ -355,3 +355,7 @@ tbody tr:nth-child(even) .td { background: #f6f9fd; }
 .via .linhas { border-top: 2px solid var(--azul); }
 .label { font: 700 15px/1.1 var(--texto); letter-spacing: .02em; color: var(--azul); }
 .form-via label { display: flex; flex-direction: column; justify-content: space-between; gap: 4px; }
+
+/* App, não site: a página nunca anda para o lado (arrasto de dois dedos no touchpad).
+   clip não cria área de rolagem, então o painel preso no topo continua funcionando. */
+html, body { overflow-x: clip; overscroll-behavior-x: none; }
