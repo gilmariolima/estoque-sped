@@ -172,9 +172,9 @@ function desenharItens() {
     : i.p.length ? `<span class="carimbo c-pend" title="${esc(i.p.join("\n"))}">Pendência</span>`
     : `<span class="carimbo c-ok">OK</span>`;
   $("#listaItens").innerHTML = mostra.length ? mostra.map((i) => `<tr>
-      <td class="td canhoto"><span class="carbono" style="font-size:17px">${esc(i.c)}</span></td>
+      <td class="td canhoto"><span class="codigo">${esc(i.c)}</span></td>
       <td class="td d-col">${esc(i.d)}${motivos(i)}</td>
-      <td class="td col-larga carbono" style="font-size:15px">${esc(i.n)}</td>
+      <td class="td col-larga">${esc(i.n)}</td>
       <td class="td col-larga">${esc(i.u)}</td>
       <td class="td direita carbono">${esc(milhar(i.q))}</td>
       <td class="td direita col-larga carbono">${esc(milhar(i.vu))}</td>
@@ -295,12 +295,12 @@ async function carregarGerados() {
   $("#listaGerados").innerHTML = gerados.length ? gerados.map((g) => `<tr>
       <td class="td canhoto"><span class="carbono">${esc(g.inventario || "—")}</span><small title="${esc(g.arquivo)}">${esc(g.arquivo.replace(/^SPED_/, "").replace(/\.txt$/, ""))}</small></td>
       <td class="td">${esc(g.nome)}</td>
-      <td class="td col-larga carbono" style="font-size:15px">${esc(g.cnpj)}</td>
+      <td class="td col-larga">${esc(g.cnpj)}</td>
       <td class="td direita carbono">${esc(milhar(g.itens))}</td>
       <td class="td direita carbono">${esc(milhar(g.total))}</td>
       <td class="td col-larga">${esc(g.data)}</td>
       <td class="td"><div class="acoes">
-        <a class="btn btn-primary" style="height:40px" href="/baixar/${encodeURIComponent(g.arquivo)}"><i class="fa-solid fa-download"></i>Baixar</a>
+        <a class="btn btn-primary btn-p" href="/baixar/${encodeURIComponent(g.arquivo)}">Baixar</a>
         <button class="icon-btn" data-menu="${esc(g.arquivo)}" title="Mais"><i class="fa-solid fa-ellipsis"></i></button>
       </div></td>
     </tr>`).join("")
