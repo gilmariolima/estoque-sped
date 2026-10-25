@@ -495,6 +495,9 @@ def ler_sped(caminho, conteudo):
             c = campos_sped(linha, 15)
             empresa.update(nome=c[5], cnpj=c[6], uf=c[8], ie=c[9], cod_mun=c[10], im=c[11],
                            perfil=c[13], ind_ativ=c[14])
+        elif reg == "0005":
+            c = campos_sped(linha, 10)
+            empresa.update(fantasia=c[1], cep=c[2], end=c[3], num=c[4], compl=c[5], bairro=c[6], fone=c[7], email=c[9])
         elif reg == "0150":
             c = campos_sped(linha, 13)
             participantes[c[1]] = dict(nome=c[2], cod_pais=c[3], cnpj=c[4], cpf=c[5], ie=c[6], cod_mun=c[7],
@@ -714,8 +717,10 @@ def ler_planilha(caminho):
         raise ValueError("não achei a linha de cabeçalho (Código, Descrição, Quantidade...)")
     # a primeira aba com quantidade e valor; sem nenhuma, a primeira com cabeçalho (cadastro)
     _, nome_aba, linhas, sep, ini, mapa = next((c for c in candidatas if c[0]), candidatas[0])
+    # A aba "Exemplo" da Planilha Modelo (e de modelos parecidos) não é inventário do cliente
     avisos = [f"a aba \"{c[1]}\" também tem um inventário e não foi lida (usada a aba \"{nome_aba}\"): "
-              "se ela faz parte do mesmo inventário, junte as abas numa só" for c in candidatas if c[0] and c[1] != nome_aba]
+              "se ela faz parte do mesmo inventário, junte as abas numa só"
+              for c in candidatas if c[0] and c[1] != nome_aba and "EXEMPLO" not in sem_acento(c[1])]
     # o total do topo serve para conferir; uma linha de total no fim da tabela vale mais
     empresa, data_inv, total_declarado = titulo_da_planilha(linhas[:ini])
     pega = lambda l, k: l[mapa[k]] if k in mapa and mapa[k] < len(l) else ""
@@ -882,7 +887,8 @@ def dados_empresa(fontes, args, pendencias):
 
     cadastro = carregar_json(CADASTRO_EMPRESAS)
     salvo = cadastro.get(cnpj, {})
-    faltando = not all(salvo.get(k) for k in ("uf", "cod_mun", "cep"))
+    # Consulta só o que falta: com UF, município e CEP no arquivo ou no formulário, não precisa
+    faltando = not all(salvo.get(k) or emp.get(k) for k in ("uf", "cod_mun", "cep"))
     if cnpj and faltando and not args.sem_consulta:
         try:
             salvo = {**consultar_cnpj(cnpj), **{k: v for k, v in salvo.items() if v}}
@@ -1202,10 +1208,11 @@ def conferir_cadastro(itens, emp, args, pendencias, unidades_desc=None):
         pendencias.append(("arquivo", "NCM", f"{len(sem_ncm)} de {len(itens)} itens sem NCM ({exemplos}): o NCM é obrigatório no "
                            "0200 para indústria, atacado e itens com substituição tributária; junte um cadastro com o NCM"))
     sem_tipo = sum(1 for it in itens if not it.tipo)
-    if sem_tipo:
+    # No comércio o tipo padrão (00, revenda) é o certo; na indústria, falta o tipo de verdade
+    if sem_tipo and (industria or args.tipo_item.zfill(2) != "00"):
         padrao = args.tipo_item.zfill(2)
         alerta = (" A empresa é indústria: matéria-prima é 01 e produto acabado 04." if industria and padrao == "00" else
-                  " Se a empresa é indústria, marque Atividade Industrial e ajuste o tipo padrão.")
+                  " Confira se é o tipo certo para esses itens.")
         pendencias.append(("arquivo", "TIPO_ITEM", f"{sem_tipo} de {len(itens)} itens sem o tipo no arquivo: usado o tipo padrão "
                            f"{padrao}.{alerta}"))
 
