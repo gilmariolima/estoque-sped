@@ -360,7 +360,7 @@ function mostrarPasta(p) {
   const nota = $("#pastaNota");
   nota.classList.toggle("pasta-erro", !p.acessivel);
   nota.textContent = !p.acessivel ? "A pasta não está acessível agora (rede desligada ou pasta apagada): os arquivos não aparecem e o SPED não pode ser gerado até ela voltar."
-    : p.eh_padrao ? "Pasta padrão do Estoque SPED. Para salvar em outro lugar (inclusive numa pasta da rede), cole o endereço e clique em Salvar."
+    : p.eh_padrao ? ""
     : "Os próximos arquivos vão para esta pasta. Os gerados antes continuam na pasta anterior.";
 }
 
