@@ -50,14 +50,19 @@ jobs:
     timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4
-      - name: Cria a tag da versão
-        if: github.ref_type != 'tag'
+      # A versão tem de existir antes do electron-builder: sem ela, ele cria uma versão para
+      # cada arquivo que envia em paralelo (saíram duas 1.2.2, cada uma com parte dos arquivos)
+      - name: Cria a versão no GitHub (e a tag, pelo botão Run workflow)
         shell: bash
         env:
           TAG: ${{ needs.confere.outputs.tag }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          git tag "$TAG"
-          git push origin "refs/tags/$TAG"
+          if gh release view "$TAG" > /dev/null 2>&1; then
+            echo "A versão $TAG já existe: o instalador vai para ela."
+          else
+            gh release create "$TAG" --target "$GITHUB_SHA" --title "Estoque SPED ${TAG#v}" --generate-notes
+          fi
       - uses: actions/setup-node@v4
         with:
           node-version: 22
