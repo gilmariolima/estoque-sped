@@ -184,6 +184,14 @@ select.input { padding-right: 6px; }
 .busca i { position: absolute; left: 11px; top: 50%; transform: translateY(-50%); color: #98a2b3; font-size: 13px; }
 .busca .input { padding-left: 32px; }
 
+/* ---------- pasta dos arquivos gerados ---------- */
+.pasta-saida { padding: 14px 18px; margin-bottom: 18px; }
+.pasta-linha { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+.pasta-campo { max-width: none; min-width: 260px; }
+.pasta-campo .input { font-family: var(--mono); font-size: 13px; }
+.pasta-nota { margin: 8px 0 0; font-size: 12.5px; color: var(--apagado); }
+.pasta-nota.pasta-erro { color: var(--erro); font-weight: 600; }
+
 /* ---------- escritório ---------- */
 .form-esc { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 14px; max-width: 920px; padding: 20px; }
 .form-esc .d2 { grid-column: span 2; }

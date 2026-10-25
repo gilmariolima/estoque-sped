@@ -10,7 +10,7 @@
 <link rel="manifest" href="/web/app.webmanifest?v=__ICONE__">
 <link rel="stylesheet" href="/web/vendor/fa/css/fontawesome.min.css">
 <link rel="stylesheet" href="/web/vendor/fa/css/solid.min.css">
-<link rel="stylesheet" href="/web/estilo.css?v=12">
+<link rel="stylesheet" href="/web/estilo.css?v=13">
 </head>
 <body>
 <div class="estrutura">
@@ -143,9 +143,18 @@
         <p class="conta" id="contaGer"></p>
       </div>
       <div class="filtros">
-        <button class="btn btn-ghost" id="btnPasta">Abrir pasta</button>
+        <button class="btn btn-ghost" id="btnPasta"><i class="fa-solid fa-folder-open"></i>Abrir pasta</button>
       </div>
     </div>
+    <form class="card pasta-saida" id="formPasta" autocomplete="off">
+      <label for="pastaSaida" class="rot">Pasta onde os arquivos são salvos</label>
+      <div class="pasta-linha">
+        <div class="busca pasta-campo"><i class="fa-solid fa-folder"></i><input class="input" id="pastaSaida" name="pasta_saida" spellcheck="false" placeholder="C:\Fiscal\SPED ou \\servidor\fiscal\SPED"></div>
+        <button class="btn btn-azul" type="submit">Salvar</button>
+        <button class="btn btn-ghost" type="button" id="pastaPadrao" hidden>Usar a pasta padrão</button>
+      </div>
+      <p class="pasta-nota" id="pastaNota"></p>
+    </form>
     <div class="card">
       <div class="tabela"><table>
         <thead><tr>
@@ -219,6 +228,6 @@
 <div class="processando" id="processando" hidden><div><span class="spin"></span><span id="procTxt">Lendo arquivos…</span></div></div>
 <div class="toast-area" id="avisos"></div>
 
-<script src="/web/app.js?v=9"></script>
+<script src="/web/app.js?v=10"></script>
 </body>
 </html>

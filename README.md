@@ -54,7 +54,7 @@ Como o app funciona:
 - fechar a janela fecha o app (não fica nada rodando em segundo plano);
 - abrir o app de novo com ele já aberto só traz a janela para a frente.
 
-**Dados:** ficam em `%LOCALAPPDATA%\Estoque SPED\dados` (`empresas.json`, `escritorio.json`, `saida\` com os SPEDs gerados, `entradas\` e `painel.log`), fora da pasta do programa. Atualizar ou desinstalar **nunca** apaga os dados.
+**Dados:** ficam em `%LOCALAPPDATA%\Estoque SPED\dados` (`empresas.json`, `escritorio.json`, `saida\` com os SPEDs gerados, `entradas\` e `painel.log`), fora da pasta do programa. Atualizar ou desinstalar **nunca** apaga os dados. A pasta dos arquivos gerados pode ser outra, inclusive da rede (`\\servidor\fiscal\SPED`): em **Arquivos gerados**, cole o endereço e clique em Salvar (fica em `config.json`). Os próximos arquivos vão para lá; os de antes continuam na pasta anterior.
 
 **Atualizar:** é automático. Ao abrir, o app procura uma versão nova em Releases e baixa em segundo plano; quando termina, pergunta se reinicia agora ou instala ao fechar. Sem internet, nada acontece (o que houve fica em `atualizacao.log`, na pasta de dados). Também dá para rodar o instalador da versão nova por cima: ele fecha o Estoque SPED aberto, troca o programa e mantém os dados. A atualização automática funciona a partir da 1.2.0; quem está numa versão anterior instala a 1.2.0 uma vez, à mão.
 

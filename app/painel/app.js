@@ -354,9 +354,32 @@ async function atualizarContaGerados() {
   return gerados;
 }
 
+function mostrarPasta(p) {
+  $("#pastaSaida").value = p.pasta_saida;
+  $("#pastaPadrao").hidden = p.eh_padrao;
+  const nota = $("#pastaNota");
+  nota.classList.toggle("pasta-erro", !p.acessivel);
+  nota.textContent = !p.acessivel ? "A pasta não está acessível agora (rede desligada ou pasta apagada): os arquivos não aparecem e o SPED não pode ser gerado até ela voltar."
+    : p.eh_padrao ? "Pasta padrão do Estoque SPED. Para salvar em outro lugar (inclusive numa pasta da rede), cole o endereço e clique em Salvar."
+    : "Os próximos arquivos vão para esta pasta. Os gerados antes continuam na pasta anterior.";
+}
+
+$("#formPasta").addEventListener("submit", async (e) => {
+  e.preventDefault();
+  await salvarPasta($("#pastaSaida").value);
+});
+$("#pastaPadrao").addEventListener("click", () => salvarPasta(""));
+async function salvarPasta(valor) {
+  const r = await api("/api/pasta", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ pasta_saida: valor }) });
+  if (r.erro) return aviso(r.erro, "erro");
+  aviso(r.eh_padrao ? "Voltou para a pasta padrão" : "Pasta dos arquivos gerados salva");
+  carregarGerados();
+}
+
 async function carregarGerados() {
+  api("/api/pasta").then((p) => !p.erro && mostrarPasta(p));
   await atualizarContaGerados();
-  $("#contaGer").textContent = gerados.length ? `${gerados.length} ${gerados.length > 1 ? "arquivos" : "arquivo"} na pasta saida` : "Nenhum arquivo gerado";
+  $("#contaGer").textContent = gerados.length ? `${gerados.length} ${gerados.length > 1 ? "arquivos" : "arquivo"} na pasta` : "Nenhum arquivo gerado";
   $("#listaGerados").innerHTML = gerados.length ? gerados.map((g) => `<tr>
       <td class="td canhoto"><span class="carbono">${esc(g.inventario || "—")}</span><small title="${esc(g.arquivo)}">${esc(g.arquivo.replace(/^SPED_/, "").replace(/\.txt$/, ""))}</small></td>
       <td class="td">${esc(g.nome)}</td>
