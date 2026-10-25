@@ -331,6 +331,8 @@ RE_LINHA_INV = re.compile(
 )
 # Fim de linha com três números do relatório: tem cara de item mesmo quando o resto não casa
 RE_TRES_NUMEROS = re.compile(r"(-?[\d.]+,\d+\s+){2}-?[\d.]+,\d+\s*$")
+# "P/" de "para" na descrição ("P/ RELOGIO", "PULS.P/REL."): tem barra, mas não é código
+RE_PARA = re.compile(r"(?<![A-Z0-9])P/", re.I)
 # Texto que é só um rótulo de total ("TOTAL:", "TOTAL DO GRUPO", "A TRANSPORTAR"), não um produto
 RE_TOTAL_REL = re.compile(r"((SUB-?\s*)?TOTA(L|IS)(\s+(DO|DA|DE|DOS|DAS|GERAL)\b.*)?|A TRANSPORTAR|TRANSPORTE)\s*:?")
 
@@ -340,21 +342,35 @@ def separar_codigo(txt):
     O código são os primeiros termos que têm número ou barra; um prefixo curto só de
     letras entra quando o termo seguinte parece código ("CO 11420JS/02", "BG 99100-003-A",
     "GC 1999885"), mas não num "KIT 2 PEÇAS". O "-" que separa código e descrição
-    ("5095 - EXPOSITOR", "5102- ISOTONIC") não fica em nenhum dos dois."""
+    ("5095 - EXPOSITOR", "5102- ISOTONIC") não fica em nenhum dos dois.
+
+    O "P/" de "para" é descrição, mesmo tendo barra ("PULS.P/REL.", "CAIXA P/"). Sem número no
+    começo, o código é o que vem antes de " - " ("BIP LITE BLACK - SMARTWATCH") ou um termo com
+    hífen curto ("MW-CX CAIXA EM ACO").
+
+    Devolve (código, descrição, duvidoso): duvidoso quando o código pode ter levado parte da
+    descrição (veio do " - " ou tem uma palavra comprida, como "01CAIXA"), e aí vai para as pendências."""
     termos = txt.split()
-    tem_cod = lambda t: bool(re.search(r"[\d/]", t))
+    tem_cod = lambda t: bool(re.search(r"[\d/]", t)) and not RE_PARA.search(t)
     n = 0
     if len(termos) > 1 and re.fullmatch(r"[A-Z]{1,3}", termos[0]) and tem_cod(termos[1]) and len(termos[1]) >= 4:
         n = 2
+    elif termos and re.fullmatch(r"[A-Z]{1,4}-[A-Z0-9]{1,4}", termos[0]):
+        n = 1
     while n < len(termos) - 1 and tem_cod(termos[n]):
         n += 1
+    if n == 0 and (m := re.match(r"(\S+(?: \S+){0,3}) [-–] (\S.*)", " ".join(termos))) and len(m[1]) <= 25:
+        return m[1], m[2], True
     codigo = " ".join(termos[:n]).rstrip("-–").rstrip()
     descricao = " ".join(termos[n:]).lstrip("-–").lstrip()
-    return codigo, descricao
+    partes = codigo.split()
+    duvidoso = any(re.search(r"\d[A-Z]{5,}$", t) for t in partes) or any(re.search(r"[A-Z]{5,}", t) for t in partes[1:])
+    return codigo, descricao, duvidoso
 
 
 def ler_relatorio_inventario(caminho, conteudo):
     itens, empresa, data_inv, total, nao_lidas = [], {}, None, None, []
+    com_espaco = []  # códigos de mais de um termo separados com segurança: um aviso só, no arquivo
     for linha in conteudo.splitlines():
         m = RE_LINHA_INV.match(linha)
         if m and RE_TOTAL_REL.fullmatch(sem_acento(m["texto"]).strip()):
@@ -362,14 +378,16 @@ def ler_relatorio_inventario(caminho, conteudo):
         elif not m and (re.match(r"^\d{2,8}\s+\S", linha) or RE_TRES_NUMEROS.search(linha)):
             nao_lidas.append(texto(linha))
         if m:
-            codigo, descr = separar_codigo(m["texto"])
+            codigo, descr, duvidoso = separar_codigo(m["texto"])
             it = Item(
                 codigo=codigo, descricao=descr or m["texto"], unidade=m["un"], ncm=m["ncm"] or "",
                 qtd=num(m["qtd"], br=True), vl_unit=num(m["unit"], br=True), vl_item=num(m["total"], br=True),
                 origem=texto(m["texto"]),
             )
-            if " " in codigo:  # o código foi separado da descrição por suposição: o contador confere
+            if duvidoso:  # o código pode ter levado parte da descrição: o contador confere este
                 it.pendencias.append(f"código \"{codigo}\" separado da descrição pelo app (linha \"{texto(m['texto'])}\"): confira")
+            elif " " in codigo:
+                com_espaco.append(codigo)
             itens.append(it)
             continue
         # Cabeçalho: o relatório sai em maiúsculas ou não, conforme o sistema do cliente
@@ -384,7 +402,11 @@ def ler_relatorio_inventario(caminho, conteudo):
             data_inv = data_ddmmaaaa(m[0]) if m else None
         elif re.match(r"\s*Total\s*:", linha, re.I):
             total = num(linha.split(":", 1)[1], br=True)
-    return Fonte(caminho, "Relatório de inventário", itens, empresa, data_inv, total, nao_lidas=nao_lidas)
+    avisos = []
+    if com_espaco:
+        avisos.append(f"{len(com_espaco)} código(s) com espaço separados da descrição pelos termos com número ou barra "
+                      f"(ex.: {', '.join(com_espaco[:3])}): confira a coluna Código na lista de itens")
+    return Fonte(caminho, "Relatório de inventário", itens, empresa, data_inv, total, nao_lidas=nao_lidas, avisos=avisos)
 
 
 def ler_fortes_fs(caminho, conteudo):

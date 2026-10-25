@@ -346,10 +346,53 @@ class Relatorio(Base):
         rel = self.CAB + "         TOTAL FLEX 1L           UN       1,000       30,0000         30,00\n"
         self.assertEqual(self.reg(self.gerar(arquivo("rel_total2.txt", rel)), "0200")[0][2], "TOTAL FLEX 1L")
 
-    def test_codigo_separado_com_espaco_e_avisado(self):
-        rel = self.CAB + "94036000 X100 50 CADEIRAS        UN       1,000       10,0000         10,00\n"
+    def test_codigo_com_espaco_vira_um_aviso_so(self):
+        # Num relatório em que quase todo código tem espaço ("U0464 013/20MM"), um aviso por item
+        # escondia os que precisam de conferência: agora vai um aviso do arquivo
+        rel = self.CAB + ("91139000 U0464 013/20MM ADONE METAL  UN   1,000   10,0000   10,00\n"
+                          "91139000 X100 50 CADEIRAS           UN   1,000   10,0000   10,00\n")
         res = self.gerar(arquivo("rel_cod.txt", rel))
-        self.assertTrue(self.pend(res, "separado da descrição pelo app"))
+        self.assertEqual(sorted(self.h010(res)), ["U0464 013/20MM", "X100 50"])
+        self.assertFalse(self.pend(res, "separado da descrição", "item"))
+        avisos = self.pend(res, "2 código(s) com espaço", "arquivo")
+        self.assertEqual(len(avisos), 1)
+        self.assertIn("U0464 013/20MM", avisos[0][2])
+
+    def test_separacao_do_codigo_em_linhas_reais(self):
+        casos = {
+            # "P/" de "para" é descrição, mesmo com barra
+            "PU11599JS/02 PULS.P/REL. PHALANX": ("PU11599JS/02", "PULS.P/REL. PHALANX", False),
+            "CO13595JSB/13 2H COROA P/ REL. POLICE": ("CO13595JSB/13 2H", "COROA P/ REL. POLICE", False),
+            # código grudado numa palavra no próprio relatório: separa, mas avisa no item
+            "CX2038GSG/01CAIXA P/ REL. GARRIDO &": ("CX2038GSG/01CAIXA", "P/ REL. GARRIDO &", True),
+            "WM1 0301BRINCOS MISS SIXTY": ("WM1 0301BRINCOS", "MISS SIXTY", True),
+            # sem número: o código vem antes do " - " (suposição, avisada no item)
+            "BIP LITE BLACK - SMARTWATCH AMAZFIT": ("BIP LITE BLACK", "SMARTWATCH AMAZFIT", True),
+            "GG 699 - EXPOSITOR INDIVIDUAL": ("GG 699", "EXPOSITOR INDIVIDUAL", True),
+            # termo curto com hífen
+            "MW-CX CAIXA EM ACO P/ RELOGIO": ("MW-CX", "CAIXA EM ACO P/ RELOGIO", False),
+            # os casos que já funcionavam continuam iguais
+            "5095 - EXPOSITOR 6 BALDAS": ("5095", "EXPOSITOR 6 BALDAS", False),
+            "5102- ISOTONIC DRINK": ("5102", "ISOTONIC DRINK", False),
+            "BG 99100-003-A EXP MEDIO EM PLASTICO P/": ("BG 99100-003-A", "EXP MEDIO EM PLASTICO P/", False),
+            "GC 1999885 EXPOSITOR EM MADEIRA": ("GC 1999885", "EXPOSITOR EM MADEIRA", False),
+            "PA12173JSBNR/65 PARAFUSO": ("PA12173JSBNR/65", "PARAFUSO", False),
+            # sem pista segura: continua sem código (vira SEMCOD com pendência)
+            "KIT 2 PEÇAS": ("", "KIT 2 PEÇAS", False),
+            "IPM 80 ESTOJO EM MADEIRA": ("", "IPM 80 ESTOJO EM MADEIRA", False),
+            "SQUEEZE BRANCA 790ML": ("", "SQUEEZE BRANCA 790ML", False),
+            "UMA DESCRICAO MUITO COMPRIDA DE PRODUTO - COM TRACO": ("", "UMA DESCRICAO MUITO COMPRIDA DE PRODUTO - COM TRACO", False),
+        }
+        for linha, esperado in casos.items():
+            with self.subTest(linha):
+                self.assertEqual(gs.separar_codigo(linha), esperado)
+
+    def test_codigo_antes_do_traco_vai_para_as_pendencias(self):
+        rel = self.CAB + "85176277 BIP LITE BLACK - SMARTWATCH  UN   1,000   10,0000   10,00\n"
+        res = self.gerar(arquivo("rel_traco.txt", rel))
+        self.assertEqual(list(self.h010(res)), ["BIP LITE BLACK"])
+        self.assertEqual(self.reg(res, "0200")[0][2], "SMARTWATCH")
+        self.assertTrue(any(c == "BIP LITE BLACK" and "confira" in m for t, c, m in res.pendencias if t == "item"))
 
 
 class Sped(Base):
