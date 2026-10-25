@@ -54,7 +54,7 @@ Como o app funciona:
 - fechar a janela fecha o app (não fica nada rodando em segundo plano);
 - abrir o app de novo com ele já aberto só traz a janela para a frente.
 
-**Dados:** ficam em `%LOCALAPPDATA%\Estoque SPED\dados` (`empresas.json`, `escritorio.json`, `saida\` com os SPEDs gerados, `entradas\` e `painel.log`), fora da pasta do programa. Atualizar ou desinstalar **nunca** apaga os dados.
+**Dados:** ficam em `%LOCALAPPDATA%\Estoque SPED\dados` (`empresas.json`, `escritorio.json`, `saida\` com os SPEDs gerados, `entradas\` e `painel.log`), fora da pasta do programa. Atualizar ou desinstalar **nunca** apaga os dados. A pasta dos arquivos gerados pode ser outra, inclusive da rede (`\\servidor\fiscal\SPED`): em **Arquivos gerados**, cole o endereço e clique em Salvar (fica em `config.json`). Os próximos arquivos vão para lá; os de antes continuam na pasta anterior.
 
 **Atualizar:** é automático. Ao abrir, o app procura uma versão nova em Releases e baixa em segundo plano; quando termina, pergunta se reinicia agora ou instala ao fechar. Sem internet, nada acontece (o que houve fica em `atualizacao.log`, na pasta de dados). Também dá para rodar o instalador da versão nova por cima: ele fecha o Estoque SPED aberto, troca o programa e mantém os dados. A atualização automática funciona a partir da 1.2.0; quem está numa versão anterior instala a 1.2.0 uma vez, à mão.
 
@@ -125,9 +125,9 @@ Avisos que valem para o arquivo todo (NCM faltando no comércio, quantidades arr
 
 ## Corrigir um item no painel
 
-Clique no item (na lista "Todos", "Com pendência" ou "Fora do arquivo") para corrigir descrição, NCM, unidade, tipo, quantidade ou valor unitário. "Salvar e gerar de novo" refaz o SPED com a correção, e as conferências do app rodam de novo sobre o valor corrigido: corrigida a quantidade fracionada, a pendência some; com a quantidade preenchida, o item que estava fora entra no arquivo. O item corrigido aparece como **Corrigido**, e "Desfazer correção" volta o que veio do arquivo.
+Clique no item (na lista "Todos", "Com pendência" ou "Fora do arquivo") para corrigir código, descrição, NCM, unidade, tipo, quantidade ou valor unitário. "Salvar e gerar de novo" refaz o SPED com a correção, e as conferências do app rodam de novo sobre o valor corrigido: corrigida a quantidade fracionada, a pendência some; com a quantidade preenchida, o item que estava fora entra no arquivo. O item corrigido aparece como **Corrigido**, e "Desfazer correção" volta o que veio do arquivo.
 
-Descrição, NCM, unidade e tipo ficam guardados por CNPJ (`ajustes.json`, na pasta de dados) e valem também nos próximos inventários da empresa, para o mesmo item do mesmo arquivo. Quantidade e valor valem só para o inventário aberto. O arquivo do cliente nunca é alterado.
+Código, descrição, NCM, unidade e tipo ficam guardados por CNPJ (`ajustes.json`, na pasta de dados) e valem também nos próximos inventários da empresa, para o mesmo item do mesmo arquivo. Quantidade e valor valem só para o inventário aberto. O arquivo do cliente nunca é alterado.
 
 ## Vários arquivos juntos
 

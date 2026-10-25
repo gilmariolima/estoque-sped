@@ -426,6 +426,28 @@ class PainelCorrecoes(unittest.TestCase):
         guardadas = json.loads((Path(self.dados.name) / "ajustes.json").read_text(encoding="utf-8"))
         self.assertNotIn(caixa["k"], guardadas.get("11222333000181", {}))
 
+    def test_pasta_dos_arquivos_gerados(self):
+        status, r = self.pedir("GET", "/api/pasta")
+        padrao = json.loads(r)
+        self.assertTrue(padrao["eh_padrao"])
+        self.assertEqual(padrao["pasta_saida"], str(Path(self.dados.name) / "saida"))
+        self.assertEqual(self.json("/api/pasta", {"pasta_saida": "relativa/sped"})[0], 400)
+        self.assertEqual(self.json("/api/pasta", {"pasta_saida": "/proc/nao-grava"})[0], 400)
+        with tempfile.TemporaryDirectory() as rede:
+            destino = Path(rede) / "fiscal" / "SPED"  # ainda não existe: o app cria
+            try:
+                status, r = self.json("/api/pasta", {"pasta_saida": f'"{destino}"'})  # colado com aspas do Explorador
+                self.assertEqual((status, r["pasta_saida"], r["eh_padrao"]), (200, str(destino), False))
+                _, gerado = self.converter(self.novo_lote())
+                self.assertTrue((destino / gerado["arquivo"]).is_file())
+                lista = json.loads(self.pedir("GET", "/api/gerados")[1])
+                self.assertEqual([g["arquivo"] for g in lista], [gerado["arquivo"]])
+                self.assertEqual(self.pedir("GET", f"/baixar/{gerado['arquivo']}")[0], 200)
+                self.assertEqual([p.name for p in destino.iterdir() if p.suffix == ".tmp"], [])  # teste de gravação apagado
+            finally:
+                _, r = self.json("/api/pasta", {"pasta_saida": ""})
+            self.assertTrue(r["eh_padrao"])
+
     def test_correcao_invalida(self):
         lote = self.novo_lote()
         itens, _ = self.converter(lote)
