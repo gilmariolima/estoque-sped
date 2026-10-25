@@ -169,7 +169,8 @@ function desenharItens() {
   // Nos filtros de pendência e de fora, o motivo fica escrito embaixo da descrição
   const motivos = (i) => (estado.filtro === "todos" ? [] : i.p).map((m) => `<span class="motivo">${esc(m)}</span>`).join("");
   const carimbo = (i) => fora ? `<span class="carimbo c-recus" title="${esc(i.p.join("\n"))}">Fora</span>`
-    : i.p.length ? `<span class="carimbo c-pend" title="${esc(i.p.join("\n"))}">Pendência</span>` : "";
+    : i.p.length ? `<span class="carimbo c-pend" title="${esc(i.p.join("\n"))}">Pendência</span>`
+    : `<span class="carimbo c-ok">OK</span>`;
   $("#listaItens").innerHTML = mostra.length ? mostra.map((i) => `<tr>
       <td class="td canhoto"><span class="carbono" style="font-size:17px">${esc(i.c)}</span></td>
       <td class="td d-col">${esc(i.d)}${motivos(i)}</td>
@@ -178,7 +179,7 @@ function desenharItens() {
       <td class="td direita carbono">${esc(milhar(i.q))}</td>
       <td class="td direita col-larga carbono">${esc(milhar(i.vu))}</td>
       <td class="td direita carbono">${esc(milhar(i.vt))}</td>
-      <td class="td">${carimbo(i)}</td>
+      <td class="td col-selo">${carimbo(i)}</td>
     </tr>`).join("")
     : `<tr><td colspan="8" class="vazio-lista"><i class="fa-solid fa-magnifying-glass"></i><br>Nenhum item</td></tr>`;
   const resto = lista.length - mostra.length;
