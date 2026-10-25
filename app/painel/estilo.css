@@ -265,6 +265,9 @@
 .nome-arq { font-weight: 600; overflow-wrap: anywhere; }
 .erro-txt { color: var(--recus); font-size: 15px; }
 .d-col { max-width: 420px; }
+/* coluna do selo (OK, Pendência, Fora): só a largura do selo */
+.col-selo { width: 1%; white-space: nowrap; text-align: center; padding-left: 10px; padding-right: 10px; }
+.c-ok { color: var(--rec); border-color: transparent; }
 .motivo { display: block; margin-top: 4px; font-size: 14px; line-height: 1.35; color: var(--pend); }
 .motivo + .motivo { margin-top: 2px; }
 .direita { text-align: right; }
