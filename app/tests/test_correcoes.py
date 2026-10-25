@@ -846,6 +846,24 @@ class CorrecoesDoPainel(Base):
         self.assertEqual((lapis_final.ncm, lapis_final.tipo, sorted(lapis_final.ajustado)), ("96091000", "07", ["ncm", "qtd", "tipo"]))
         self.assertEqual(res.fora, [])
 
+    def test_codigo_corrigido(self):
+        csv = self.planilha()
+        chaves = self.chaves(csv)
+        # Linha sem código ganha um código de verdade; o código antigo ainda acha o complemento
+        cad = arquivo("cadastro.csv", "Codigo;Descricao;NCM\nA1;CANETA AZUL;96081000\n")
+        res = self.gerar(csv, cad, ajustes={chaves[2]: {"codigo": "BOR-01"}, chaves[0]: {"codigo": "CAN-01"}})
+        h = self.h010(res)
+        self.assertIn("BOR-01", h)
+        self.assertIn("CAN-01", h)
+        self.assertNotIn("A1", h)
+        caneta = next(i for i in res.itens if i.codigo == "CAN-01")
+        self.assertEqual((caneta.ncm, caneta.ajustado), ("96081000", ["codigo"]))
+        self.assertEqual([c[1] for c in self.reg(res, "0200") if c[1] == "CAN-01"], ["CAN-01"])
+        # Código igual ao de outro item com outra descrição: o app não junta, renomeia e avisa
+        res = self.gerar(csv, ajustes={chaves[2]: {"codigo": "A1"}})
+        self.assertIn("A1-2", self.h010(res))
+        self.assertTrue(self.pend(res, "repetido com outra descrição", "item"))
+
     def test_valor_corrigido_refaz_o_total(self):
         csv = self.planilha()
         caneta = self.chaves(csv)[0]

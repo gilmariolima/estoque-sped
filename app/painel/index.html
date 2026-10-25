@@ -10,7 +10,7 @@
 <link rel="manifest" href="/web/app.webmanifest?v=__ICONE__">
 <link rel="stylesheet" href="/web/vendor/fa/css/fontawesome.min.css">
 <link rel="stylesheet" href="/web/vendor/fa/css/solid.min.css">
-<link rel="stylesheet" href="/web/estilo.css?v=13">
+<link rel="stylesheet" href="/web/estilo.css?v=14">
 </head>
 <body>
 <div class="estrutura">
@@ -207,14 +207,15 @@
     <div class="item-corpo">
       <div class="item-pend" id="itemPend"></div>
       <div class="grupo">
-        <label class="larga4"><span class="rot">Descrição</span><input class="input" name="descricao" maxlength="200"></label>
+        <label><span class="rot">Código</span><input class="input" name="codigo" maxlength="60" spellcheck="false"></label>
+        <label class="larga3"><span class="rot">Descrição</span><input class="input" name="descricao" maxlength="200"></label>
         <label><span class="rot">NCM</span><input class="input" name="ncm" inputmode="numeric" maxlength="10" placeholder="8 dígitos"></label>
         <label><span class="rot">Unidade</span><input class="input" name="unidade" maxlength="6" autocapitalize="characters"></label>
         <label class="larga"><span class="rot">Tipo do item</span><select class="input" name="tipo"></select></label>
         <label><span class="rot">Quantidade</span><input class="input" name="qtd" inputmode="decimal"></label>
         <label><span class="rot">Valor unitário</span><input class="input" name="vl_unit" inputmode="decimal"></label>
       </div>
-      <p class="item-nota">Descrição, NCM, unidade e tipo ficam guardados para os próximos inventários desta empresa. Quantidade e valor valem só para este.</p>
+      <p class="item-nota">Código, descrição, NCM, unidade e tipo ficam guardados para os próximos inventários desta empresa. Quantidade e valor valem só para este.</p>
     </div>
     <div class="item-pe">
       <button class="btn btn-ghost" type="button" id="itemDesfazer" hidden>Desfazer correção</button>
@@ -228,6 +229,6 @@
 <div class="processando" id="processando" hidden><div><span class="spin"></span><span id="procTxt">Lendo arquivos…</span></div></div>
 <div class="toast-area" id="avisos"></div>
 
-<script src="/web/app.js?v=10"></script>
+<script src="/web/app.js?v=11"></script>
 </body>
 </html>
