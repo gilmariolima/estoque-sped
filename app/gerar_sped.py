@@ -1173,6 +1173,10 @@ UNIDADES_INTEIRAS = {"UN", "UND", "UNID", "PC", "PCA", "PCS", "PCT", "PCTE", "PT
 SINONIMOS = [{"UN", "UND", "UNID"}, {"PC", "PCA"}, {"PCT", "PCTE", "PT"}, {"M", "MT"}, {"L", "LT"}, {"G", "GR"}, {"T", "TON"}]
 # Tipos do item que só a indústria tem: matéria-prima, produto em processo, acabado, subproduto, intermediário
 TIPOS_INDUSTRIA = {"01", "03", "04", "05", "06"}
+TIPOS_NOME = [("00", "Mercadoria para revenda"), ("01", "Matéria-prima"), ("02", "Embalagem"), ("03", "Produto em processo"),
+              ("04", "Produto acabado"), ("05", "Subproduto"), ("06", "Produto intermediário"),
+              ("07", "Material de uso e consumo"), ("08", "Ativo imobilizado"), ("09", "Serviços"), ("10", "Outros insumos"),
+              ("99", "Outras")]
 
 
 def conferir_cadastro(itens, emp, args, pendencias, unidades_desc=None):
@@ -1211,8 +1215,14 @@ def conferir_cadastro(itens, emp, args, pendencias, unidades_desc=None):
     # No comércio o tipo padrão (00, revenda) é o certo; na indústria, falta o tipo de verdade
     if sem_tipo and (industria or args.tipo_item.zfill(2) != "00"):
         padrao = args.tipo_item.zfill(2)
-        alerta = (" A empresa é indústria: matéria-prima é 01 e produto acabado 04." if industria and padrao == "00" else
-                  " Confira se é o tipo certo para esses itens.")
+        nome_tipo = dict(TIPOS_NOME).get(padrao, "")
+        if industria and padrao == "00":
+            alerta = " A empresa é indústria: matéria-prima é 01 e produto acabado 04."
+        elif not industria and padrao in TIPOS_INDUSTRIA:
+            alerta = (f" O tipo {padrao} ({nome_tipo}) é de indústria, mas a Atividade está como Outros: no comércio, "
+                      "use 00 (Mercadoria para revenda); se a empresa é indústria, marque Atividade Industrial.")
+        else:
+            alerta = " Confira se é o tipo certo para esses itens."
         pendencias.append(("arquivo", "TIPO_ITEM", f"{sem_tipo} de {len(itens)} itens sem o tipo no arquivo: usado o tipo padrão "
                            f"{padrao}.{alerta}"))
 
