@@ -86,6 +86,7 @@ class Fonte:
     data_inv: date | None = None
     total_declarado: Decimal | None = None
     unidades: dict = field(default_factory=dict)
+    nao_lidas: list = field(default_factory=list)  # linhas com cara de item que o leitor não entendeu
 
     @property
     def tem_valores(self):
@@ -219,9 +220,11 @@ def separar_codigo(txt):
 
 
 def ler_relatorio_inventario(caminho, conteudo):
-    itens, empresa, data_inv, total = [], {}, None, None
+    itens, empresa, data_inv, total, nao_lidas = [], {}, None, None, []
     for linha in conteudo.splitlines():
         m = RE_LINHA_INV.match(linha)
+        if not m and re.match(r"^\d{2,8}\s+\S", linha):
+            nao_lidas.append(texto(linha))
         if m:
             codigo, descr = separar_codigo(m["texto"])
             itens.append(Item(
@@ -242,7 +245,7 @@ def ler_relatorio_inventario(caminho, conteudo):
             data_inv = data_ddmmaaaa(m[0]) if m else None
         elif re.match(r"\s*Total\s*:", linha, re.I):
             total = num(linha.split(":", 1)[1], br=True)
-    return Fonte(caminho, "Relatório de inventário", itens, empresa, data_inv, total)
+    return Fonte(caminho, "Relatório de inventário", itens, empresa, data_inv, total, nao_lidas=nao_lidas)
 
 
 def ler_fortes_fs(caminho, conteudo):
@@ -286,7 +289,7 @@ def ler_fortes_fs(caminho, conteudo):
 
 
 def ler_sped(caminho, conteudo):
-    itens, cadastro, empresa, data_inv, unidades, total = [], {}, {}, None, {}, None
+    itens, cadastro, empresa, data_inv, unidades, total, nao_lidas = [], {}, {}, None, {}, None, []
     for linha in conteudo.splitlines():
         c = linha.strip().strip("|").split("|")
         reg = c[0]
@@ -299,7 +302,9 @@ def ler_sped(caminho, conteudo):
             cadastro[c[1]] = c
         elif reg == "H005" and len(c) >= 3 and not data_inv:
             data_inv, total = data_ddmmaaaa(c[1]), num(c[2])
-        elif reg == "H010" and len(c) >= 7:
+        elif reg == "H010" and len(c) < 7:
+            nao_lidas.append(texto(linha))
+        elif reg == "H010":
             c += [""] * (11 - len(c))
             itens.append(Item(codigo=c[1], unidade=c[2], qtd=num(c[3]), vl_unit=num(c[4]),
                               vl_item=num(c[5]), ind_prop=c[6] or "0", cod_cta=c[9], origem="H010"))
@@ -312,7 +317,7 @@ def ler_sped(caminho, conteudo):
         for c in cadastro.values():
             c += [""] * (13 - len(c))
             itens.append(Item(codigo=c[1], descricao=c[2], unidade=c[5], tipo=c[6], ncm=c[7]))
-    return Fonte(caminho, "SPED / bloco H", itens, empresa, data_inv, total, unidades)
+    return Fonte(caminho, "SPED / bloco H", itens, empresa, data_inv, total, unidades, nao_lidas)
 
 
 # Cabeçalhos de planilha reconhecidos (sem acento, maiúsculo, por "contém")
@@ -639,6 +644,9 @@ def complementar(principal, extras, pendencias, codigos_gerados):
         if it.qtd == 0:
             pendencias.append(("item", it.codigo, "quantidade zero: item fora do arquivo"))
             continue
+        if it.qtd != it.qtd.quantize(TRES):
+            pendencias.append(("item", it.codigo, f"quantidade {str(it.qtd).replace('.', ',')} arredondada para "
+                                                  f"{fmt(it.qtd, 3)} (o SPED aceita 3 casas); valor do item mantido"))
         if it.vl_item is None:
             it.vl_item = (it.qtd * it.vl_unit).quantize(DOIS, ROUND_HALF_UP)
         if it.vl_unit is None:
@@ -801,6 +809,9 @@ class Resultado:
 
 def converter(principal, extras, args):
     pendencias, gerados = [], [0]
+    for f in (principal, *extras):
+        for linha in f.nao_lidas:
+            pendencias.append(("arquivo", f.caminho.name, f"linha não lida (confira e corrija o arquivo): {linha[:120]}"))
     if not principal.itens:
         raise ErroConversao(f"{principal.caminho.name} não tem nenhum item: confira se é o arquivo certo "
                             "ou se a planilha foi preenchida.")
@@ -897,7 +908,8 @@ def gravar(res, pasta):
         with open(arq_pend, "w", encoding="utf-8-sig", newline="") as fp:
             w = csv.writer(fp, delimiter=";")
             w.writerow(["tipo", "codigo", "pendencia"])
-            w.writerows(res.pendencias)
+            # Código como texto (="0509"): o Excel apaga o zero à esquerda de números
+            w.writerows((t, f'="{c}"' if c[:1].isdigit() else c, m) for t, c, m in res.pendencias)
     elif arq_pend.exists():
         arq_pend.unlink()
     return arq, arq_pend, arq_dom
