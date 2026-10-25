@@ -635,7 +635,9 @@ class Conferencias(Base):
 
     def test_tipo_padrao_avisado(self):
         p = arquivo("semtipo.csv", "Codigo;Descricao;Qtd;Valor Unit;Tipo\nA1;X;1;1,00;\nA2;Y;1;1,00;04\n")
-        res = self.gerar(p)
+        # no comércio o tipo padrão 00 (revenda) é o certo: sem aviso
+        self.assertFalse(self.pend(self.gerar(p), "sem o tipo no arquivo"))
+        res = self.gerar(p, ind_ativ="0")
         self.assertEqual(len(self.pend(res, "1 de 2 itens sem o tipo no arquivo: usado o tipo padrão 00", "arquivo")), 1)
 
     def test_cnae_de_industria_marca_a_atividade(self):
@@ -793,6 +795,19 @@ class Rodada2(Base):
         primeira_item = next(n for n, l in enumerate(linhas) if l.startswith("item;"))
         self.assertTrue(all(not l.startswith("item;") for l in linhas[:primeira_item]))
         self.assertTrue(all(l.startswith("item;") for l in linhas[primeira_item:]))
+
+
+class SpedCompleto(Base):
+    def test_endereco_do_0005_e_sem_consulta_quando_o_arquivo_tem_tudo(self):
+        txt = ("|0000|019|0|01122025|31122025|LOJA X LTDA|11222333000181||CE|061234567|2304400||||A|1|\n"
+               "|0005|LOJA X|60000000|RUA A|10||CENTRO|8532000000||x@x.com|\n"
+               "|0200|A|CANETA|||UN|00|96081000|||||\n|H005|31122025|10,00|01|\n|H010|A|UN|1,000|10,000000|10,00|0||||10,00|\n")
+        f = gs.ler_arquivo(arquivo("completo.txt", txt))
+        with mock.patch.object(gs, "consultar_cnpj", side_effect=AssertionError("não devia consultar")):
+            res = gs.converter(f, [], gs.opcoes())
+        validar(self, res.registros)
+        self.assertEqual(self.reg(res, "0005")[0][1:8], ["LOJA X", "60000000", "RUA A", "10", "", "CENTRO", "8532000000"])
+        self.assertFalse([p for p in res.pendencias if p[0] == "empresa"])
 
 
 class ArquivosDeExemplo(Base):
