@@ -813,6 +813,47 @@ class SpedCompleto(Base):
         self.assertFalse([p for p in res.pendencias if p[0] == "empresa"])
 
 
+class CorrecoesDoPainel(Base):
+    """Correções feitas no painel (args.ajustes) entram antes das conferências do app."""
+
+    def planilha(self):
+        return arquivo("estoque.csv", "Codigo;Descricao;Unidade;Quantidade;Valor unitario\n"
+                                      "A1;CANETA AZUL;UN;10;2,50\n"
+                                      "A2;LAPIS;UN;;1,00\n"
+                                      ";BORRACHA;UN;3;0,90\n"
+                                      ";BORRACHA;UN;5;0,90\n")
+
+    def chaves(self, caminho):
+        itens = gs.ler_arquivo(Path(caminho)).itens
+        return [gs.chave_item(i) for i in itens]
+
+    def test_chave_nao_muda_e_separa_linhas_sem_codigo(self):
+        csv = self.planilha()
+        a, b = self.chaves(csv), self.chaves(csv)
+        self.assertEqual(a, b)
+        self.assertEqual(len(set(a)), 4)  # as duas BORRACHA sem código são linhas diferentes
+
+    def test_item_fora_entra_com_a_quantidade_corrigida(self):
+        csv = self.planilha()
+        lapis = self.chaves(csv)[1]
+        res = self.gerar(csv)
+        self.assertNotIn("A2", self.h010(res))
+        self.assertEqual([i.codigo for i in res.fora], ["A2"])
+        res = self.gerar(csv, ajustes={lapis: {"qtd": "1.000", "ncm": "96091000", "tipo": "7"}})
+        self.assertEqual(self.h010(res)["A2"][3:6], ["1000,000", "1,000000", "1000,00"])
+        lapis_final = next(i for i in res.itens if i.codigo == "A2")
+        self.assertEqual((lapis_final.ncm, lapis_final.tipo, sorted(lapis_final.ajustado)), ("96091000", "07", ["ncm", "qtd", "tipo"]))
+        self.assertEqual(res.fora, [])
+
+    def test_valor_corrigido_refaz_o_total(self):
+        csv = self.planilha()
+        caneta = self.chaves(csv)[0]
+        res = self.gerar(csv, ajustes={caneta: {"vl_unit": "3,10", "descricao": "  ", "unidade": "cx"}})
+        h = self.h010(res)["A1"]
+        self.assertEqual((h[2], h[3:6]), ("CX", ["10,000", "3,100000", "31,00"]))
+        self.assertEqual(next(i for i in res.itens if i.codigo == "A1").descricao, "CANETA AZUL")  # vazio não apaga
+
+
 class ArquivosDeExemplo(Base):
     """Todo arquivo de exemplo da pasta arquivos/ gera um SPED que passa na conferência."""
 

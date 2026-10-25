@@ -26,14 +26,22 @@ Os dois saem do mesmo inventário e têm o mesmo total.
 
 O Estoque SPED é um programa de verdade (feito em Electron, como o VS Code), com ícone próprio na Área de Trabalho, no Menu Iniciar e na barra de tarefas. O instalador é de um clique e não precisa de Python, Edge nem Chrome no computador do escritório.
 
-**Gerar o instalador** (uma vez por versão, num Windows 64 bits com Node 22+ e internet, dentro da pasta do código):
+**Publicar uma versão nova** (o GitHub gera o instalador sozinho):
+
+1. Aumente o `version` do `package.json` (ex.: `npm version 1.3.0 --no-git-tag-version`) e junte na `main`.
+2. Em **Releases → Draft a new release**, crie a tag `v<versão>` (ex.: `v1.3.0`) na `main` e publique. Ou, pelo terminal: `git tag v1.3.0` e `git push origin v1.3.0`.
+3. O workflow **Publicar versão** (`.github/workflows/publicar.yml`) roda os testes, gera o instalador num Windows e anexa à versão o `Estoque-SPED-Setup-<versão>.exe` e o `latest.yml`. Acompanhe na aba **Actions**; leva uns 10 minutos.
+
+A tag tem de bater com o `version` do `package.json`: se não bater, o workflow para e diz o que fazer. Os testes também rodam sozinhos (workflow **Testes**) em todo pull request e a cada mudança na `main`.
+
+**Gerar o instalador no próprio computador** (para testar antes de publicar; num Windows 64 bits com Node 22+ e internet):
 
 ```powershell
 npm ci
 npm run pacote
 ```
 
-Sai em `pacote\Estoque-SPED-Setup-<versão>.exe`. Para uma versão nova, aumente o `version` do `package.json` antes.
+Sai em `pacote\Estoque-SPED-Setup-<versão>.exe`, sem publicar nada.
 
 O `npm run pacote` primeiro monta o Python que vai dentro do app (`app\python`: o Python 3.12 *embeddable* oficial de python.org com openpyxl, et_xmlfile e xlrd do PyPI, conferidos pelo sha256). Isso só é baixado na primeira vez. Sem internet, dá para usar um zip já baixado: `npm run preparar-python -- --zip python-3.12.10-embed-amd64.zip`.
 
@@ -48,7 +56,7 @@ Como o app funciona:
 
 **Dados:** ficam em `%LOCALAPPDATA%\Estoque SPED\dados` (`empresas.json`, `escritorio.json`, `saida\` com os SPEDs gerados, `entradas\` e `painel.log`), fora da pasta do programa. Atualizar ou desinstalar **nunca** apaga os dados.
 
-**Atualizar:** rode o instalador da versão nova. Ele fecha o Estoque SPED aberto, troca o programa e mantém os dados.
+**Atualizar:** é automático. Ao abrir, o app procura uma versão nova em Releases e baixa em segundo plano; quando termina, pergunta se reinicia agora ou instala ao fechar. Sem internet, nada acontece (o que houve fica em `atualizacao.log`, na pasta de dados). Também dá para rodar o instalador da versão nova por cima: ele fecha o Estoque SPED aberto, troca o programa e mantém os dados. A atualização automática funciona a partir da 1.2.0; quem está numa versão anterior instala a 1.2.0 uma vez, à mão.
 
 **Vindo da versão antiga** (zip com `Instalar.cmd` e janela do Edge): é só instalar. Na primeira vez o app desliga o painel antigo, move a pasta `%LOCALAPPDATA%\Programs\Estoque SPED\dados` para `%LOCALAPPDATA%\Estoque SPED\dados` e só então apaga o que a versão antiga deixou (`Estoque SPED.cmd`, `LEIA-ME.txt` e a pasta `app`). Os atalhos "Estoque SPED" têm o mesmo nome e são substituídos pelo instalador. Se a pasta nova já tiver dados, nada é movido nem apagado.
 
@@ -76,7 +84,8 @@ Estrutura:
 | `app/gerar_sped.py` | leitores dos formatos e montagem do arquivo (leiaute pelo Guia Prático EFD ICMS/IPI) |
 | `app/painel.py`, `app/painel/` | o painel local (servidor HTTP em `127.0.0.1` e a página) |
 | `app/tests/` | testes do conversor e do painel |
-| `electron/` | o app desktop: janela, motor, pasta de dados e migração da versão antiga |
+| `electron/` | o app desktop: janela, motor, pasta de dados, atualização automática e migração da versão antiga |
+| `.github/workflows/` | testes a cada pull request e publicação da versão (instalador) ao criar a tag |
 | `scripts/` | montagem do Python embutido |
 | `test/` | testes do app |
 
@@ -113,6 +122,12 @@ O app nunca muda nem descarta um dado do cliente sem avisar. Vão para as pendê
 - unidades fora da tabela ou com duas siglas para a mesma unidade (PCT e PCTE), itens com tipo de indústria e Atividade "Outros".
 
 Avisos que valem para o arquivo todo (nenhum item com descrição, NCM faltando no comércio, quantidades arredondadas para 3 casas) aparecem uma vez só, e não em cada item: o filtro "Com pendência" mostra o que é de cada item.
+
+## Corrigir um item no painel
+
+Clique no item (na lista "Todos", "Com pendência" ou "Fora do arquivo") para corrigir descrição, NCM, unidade, tipo, quantidade ou valor unitário. "Salvar e gerar de novo" refaz o SPED com a correção, e as conferências do app rodam de novo sobre o valor corrigido: corrigida a quantidade fracionada, a pendência some; com a quantidade preenchida, o item que estava fora entra no arquivo. O item corrigido aparece como **Corrigido**, e "Desfazer correção" volta o que veio do arquivo.
+
+Descrição, NCM, unidade e tipo ficam guardados por CNPJ (`ajustes.json`, na pasta de dados) e valem também nos próximos inventários da empresa, para o mesmo item do mesmo arquivo. Quantidade e valor valem só para o inventário aberto. O arquivo do cliente nunca é alterado.
 
 ## Vários arquivos juntos
 

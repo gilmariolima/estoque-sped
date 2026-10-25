@@ -10,6 +10,7 @@ const fs = require('node:fs')
 const path = require('node:path')
 const { NOME, pastaDados, pastaVersaoAntiga, migrarDadosAntigos, limparVersaoAntiga } = require('./dados')
 const { pastaMotor, caminhoPython, iniciarMotor } = require('./motor')
+const { criarAtualizacao } = require('./atualizar')
 
 const APP_ID = 'com.gilmariolima.estoquesped'
 const RAIZ = path.resolve(__dirname, '..')
@@ -21,6 +22,7 @@ let pasta = null
 let saindo = false
 let encerrado = false
 let prefs = {}
+let atualizacao = null
 
 // ---------- preferências da janela ----------
 
@@ -160,6 +162,25 @@ async function falha(titulo, erro) {
   app.exit(1)
 }
 
+// ---------- atualização automática ----------
+
+function procurarAtualizacao() {
+  // Só no app instalado no Windows: rodando do código (npm run app) não há o que atualizar
+  if (!app.isPackaged || !NO_WINDOWS || process.env.ESTOQUE_SEM_ATUALIZAR) return
+  try {
+    const { autoUpdater } = require('electron-updater')
+    atualizacao = criarAtualizacao({
+      atualizador: autoUpdater,
+      perguntar: (opcoes) => (janela ? dialog.showMessageBox(janela, opcoes) : dialog.showMessageBox(opcoes)),
+      sair: () => app.quit(),
+      log: path.join(pasta, 'atualizacao.log'),
+    })
+    atualizacao.procurar()
+  } catch {
+    // sem a atualização, o app funciona do mesmo jeito
+  }
+}
+
 // ---------- ciclo de vida ----------
 
 async function iniciar() {
@@ -184,6 +205,7 @@ async function iniciar() {
       if (!saindo) falha('O Estoque SPED parou de funcionar.', new Error(`O motor fechou sozinho (código ${codigo}). Veja o painel.log na pasta de dados.`))
     })
     abrirJanela()
+    procurarAtualizacao()
   } catch (e) {
     await falha('O Estoque SPED não conseguiu iniciar.', e)
   }
@@ -206,6 +228,12 @@ if (!app.requestSingleInstanceLock()) {
     // Motor parado: sai direto (um segundo app.quit() às vezes não termina o processo).
     Promise.resolve(motor?.parar()).catch(() => {}).finally(() => {
       encerrado = true
+      // Versão nova baixada: o instalador assume e o app sai pelo app.quit dele.
+      // Se a saída travar, o app.exit garante (o instalador já está rodando à parte).
+      if (atualizacao?.instalarAoSair()) {
+        setTimeout(() => app.exit(0), 5000).unref()
+        return
+      }
       app.exit(0)
     })
   })
