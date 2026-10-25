@@ -212,11 +212,8 @@ function desenharResultado() {
   $("#resumo").innerHTML = linhas.map(([a, b]) => `<p><span>${esc(a)}</span><span class="carbono">${esc(b)}</span></p>`).join("");
 
   const avisos = r.gerais.map((g) => g.msg);
-  if (r.fora.length) avisos.push(`${r.fora.length} ${r.fora.length > 1 ? "itens ficaram" : "item ficou"} fora do arquivo: clique para ver quais e por quê`);
-  $("#gerais").innerHTML = avisos.map((m, n) => {
-    const ir = n === avisos.length - 1 && r.fora.length ? ' class="ir" data-ir="fora"' : "";
-    return `<p${ir}><i class="fa-solid fa-triangle-exclamation"></i><span>${esc(m)}</span></p>`;
-  }).join("");
+  if (r.fora.length) avisos.push(`${r.fora.length} ${r.fora.length > 1 ? "itens" : "item"} fora do arquivo`);
+  $("#gerais").innerHTML = avisos.map((m) => `<p><i class="fa-solid fa-triangle-exclamation"></i><span>${esc(m)}</span></p>`).join("");
 
   $("#btnBaixar").hidden = false;
   $("#btnBaixar").href = `/baixar/${encodeURIComponent(r.arquivo)}`;
@@ -255,11 +252,6 @@ function mudarFiltro(f) {
 $("#segs").addEventListener("click", (e) => {
   const s = e.target.closest(".seg");
   if (s) mudarFiltro(s.dataset.f);
-});
-$("#gerais").addEventListener("click", (e) => {
-  if (!e.target.closest("[data-ir=fora]")) return;
-  mudarFiltro("fora");
-  $("#segs").scrollIntoView({ behavior: "smooth", block: "start" });
 });
 $("#busca").addEventListener("input", (e) => { estado.busca = e.target.value; estado.limite = POR_PAGINA; desenharItens(); });
 $("#maisItens").addEventListener("click", () => { estado.limite += POR_PAGINA; desenharItens(); });
