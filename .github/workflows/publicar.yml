@@ -1,33 +1,63 @@
-# Publica uma versão nova: ao criar a tag v<versão> (ex.: v1.2.0), roda os testes, gera o
-# instalador no Windows e publica em Releases com o .exe e o latest.yml que a atualização
-# automática do app lê. A tag tem de bater com o "version" do package.json.
+# Publica uma versão nova: roda os testes, gera o instalador no Windows e publica em Releases
+# com o .exe e o latest.yml que a atualização automática do app lê. Dois jeitos de disparar:
+#   - Actions > Publicar versão > Run workflow (na main): cria a tag v<versão do package.json>;
+#   - criar a tag v<versão> (ex.: v1.2.0), que tem de bater com o "version" do package.json.
 name: Publicar versão
 
 on:
   push:
     tags: ["v*"]
+  workflow_dispatch:
 
 permissions:
   contents: write
 
 jobs:
+  confere:
+    runs-on: ubuntu-latest
+    outputs:
+      tag: ${{ steps.versao.outputs.tag }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Confere a versão do package.json
+        id: versao
+        run: |
+          tag="v$(node -p "require('./package.json').version")"
+          if [ "$GITHUB_REF_TYPE" = "tag" ]; then
+            if [ "$tag" != "$GITHUB_REF_NAME" ]; then
+              echo "::error::A tag $GITHUB_REF_NAME não bate com a versão do package.json ($tag). Mude o package.json (npm version) e crie a tag $tag."
+              exit 1
+            fi
+          else
+            if [ "$GITHUB_REF_NAME" != "main" ]; then
+              echo "::error::Publique a partir da main (escolha main em \"Use workflow from\")."
+              exit 1
+            fi
+            if git ls-remote --exit-code --tags origin "refs/tags/$tag" > /dev/null; then
+              echo "::error::A versão $tag já existe. Aumente o version do package.json (npm version) antes de publicar de novo."
+              exit 1
+            fi
+          fi
+          echo "tag=$tag" >> "$GITHUB_OUTPUT"
+
   testes:
+    needs: confere
     uses: ./.github/workflows/testes.yml
 
   instalador:
-    needs: testes
+    needs: [confere, testes]
     runs-on: windows-latest
     timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4
-      - name: Confere a tag com a versão do package.json
+      - name: Cria a tag da versão
+        if: github.ref_type != 'tag'
         shell: bash
+        env:
+          TAG: ${{ needs.confere.outputs.tag }}
         run: |
-          versao=$(node -p "require('./package.json').version")
-          if [ "v$versao" != "$GITHUB_REF_NAME" ]; then
-            echo "::error::A tag $GITHUB_REF_NAME não bate com a versão $versao do package.json. Mude o package.json (npm version) e crie a tag v$versao."
-            exit 1
-          fi
+          git tag "$TAG"
+          git push origin "refs/tags/$TAG"
       - uses: actions/setup-node@v4
         with:
           node-version: 22
