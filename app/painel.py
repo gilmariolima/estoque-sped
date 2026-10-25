@@ -30,7 +30,8 @@ PORTA = 8765  # padrão quando roda fora do app desktop
 LIMITE_ENVIO = 300 * 1024 * 1024  # arquivo do cliente maior que isso não é inventário
 PASTA = Path(__file__).resolve().parent
 WEB = PASTA / "painel"
-SAIDA = gs.DADOS / "saida"
+SAIDA_PADRAO = gs.DADOS / "saida"
+CONFIG = gs.DADOS / "config.json"  # preferências do painel (pasta dos arquivos gerados)
 ENTRADAS = gs.DADOS / "entradas"
 AJUSTES_EMPRESAS = gs.DADOS / "ajustes.json"  # correções de cadastro de cada empresa (CNPJ), para os próximos inventários
 TIPOS = {".html": "text/html; charset=utf-8", ".css": "text/css; charset=utf-8", ".js": "text/javascript; charset=utf-8",
@@ -88,6 +89,51 @@ def resumo_fonte(caminho):
         return f, {"nome": caminho.name, "tipo": f.tipo, "itens": len(f.itens), "valores": f.tem_valores}
     except Exception as e:
         return None, {"nome": caminho.name, "erro": str(e)}
+
+
+def pasta_saida():
+    """Pasta dos arquivos gerados: a escolhida na aba Arquivos gerados ou a padrão, na pasta de dados."""
+    try:
+        escolhida = str(gs.carregar_json(CONFIG).get("pasta_saida") or "").strip()
+    except gs.ErroConversao:
+        escolhida = ""
+    return Path(escolhida) if escolhida else SAIDA_PADRAO
+
+
+def info_pasta():
+    pasta = pasta_saida()
+    try:
+        existe = pasta.is_dir()
+    except OSError:  # pasta de rede fora do ar
+        existe = False
+    return {"pasta_saida": str(pasta), "padrao": str(SAIDA_PADRAO), "eh_padrao": pasta == SAIDA_PADRAO,
+            "acessivel": existe or pasta == SAIDA_PADRAO}
+
+
+def mudar_pasta(dados):
+    """Troca a pasta dos arquivos gerados. Vazio volta para a padrão. A pasta tem de ser um
+    caminho completo (C:\\... ou \\\\servidor\\...) em que o app consiga gravar."""
+    texto = str(dados.get("pasta_saida") or "").strip().strip('"').strip()
+    if texto:
+        pasta = Path(os.path.expandvars(texto))
+        if not pasta.is_absolute():
+            raise PedidoInvalido("Use o endereço completo da pasta, como C:\\Fiscal\\SPED ou \\\\servidor\\fiscal\\SPED.")
+        try:
+            pasta.mkdir(parents=True, exist_ok=True)
+            teste = pasta / f".estoque-sped-{secrets.token_hex(4)}.tmp"
+            teste.write_bytes(b"")
+            teste.unlink()
+        except OSError as e:
+            raise PedidoInvalido(f"Não foi possível gravar em {pasta}: {e.strerror or e}. Confira o endereço e se a pasta "
+                                 "(ou o servidor) está acessível.")
+    with trava:
+        config = gs.carregar_json(CONFIG) if CONFIG.exists() else {}
+        if texto and pasta != SAIDA_PADRAO:
+            config["pasta_saida"] = str(pasta)
+        else:
+            config.pop("pasta_saida", None)
+        gravar_json(CONFIG, config)
+    return info_pasta()
 
 
 def gravar_json(caminho, dados):
@@ -203,7 +249,12 @@ def converter(dados):
             # onde digitar a data que falta (ex.: Estoque Escriturado, que não traz data)
             return {"erro": str(e), "campo": e.campo, "arquivos": arquivos, "principal": principal.caminho.name,
                     "campos": campos_conhecidos(principal, extras, campos, args)}
-        arq, arq_pend, arq_dom = gs.gravar(res, SAIDA)
+        try:
+            arq, arq_pend, arq_dom = gs.gravar(res, pasta_saida())
+        except OSError as e:
+            return {"erro": f"Não foi possível salvar na pasta {pasta_saida()}: {e.strerror or e}. Confira se ela (ou o servidor) "
+                            "está acessível, ou troque a pasta na aba Arquivos gerados.", "arquivos": arquivos,
+                    "principal": principal.caminho.name, "campos": campos_conhecidos(principal, extras, campos, args)}
 
     # As pendências de item vêm do próprio item: com código repetido (próprio e em terceiros,
     # ou um renomeado), agrupar pelo código mostraria o aviso no item errado
@@ -246,7 +297,11 @@ def converter(dados):
 
 def gerados():
     lista = []
-    for arq in sorted(SAIDA.glob("SPED_*.txt"), key=lambda p: p.stat().st_mtime, reverse=True):
+    try:
+        arquivos = sorted(pasta_saida().glob("SPED_*.txt"), key=lambda p: p.stat().st_mtime, reverse=True)
+    except OSError:  # pasta de rede fora do ar: a aba mostra o aviso da pasta
+        arquivos = []
+    for arq in arquivos:
         info = {"arquivo": arq.name, "data": datetime.fromtimestamp(arq.stat().st_mtime).strftime("%d/%m/%Y %H:%M"),
                 "nome": "", "cnpj": "", "inventario": "", "total": "", "itens": 0, "linhas": 0}
         with open(arq, encoding="latin-1") as fp:
@@ -376,16 +431,18 @@ class Painel(BaseHTTPRequestHandler):
                 return self.responder(pagina.encode("utf-8"), TIPOS[".html"])
             if rota == "/api/gerados":
                 return self.responder(gerados())
+            if rota == "/api/pasta":
+                return self.responder(info_pasta())
             if rota == "/api/escritorio":
                 return self.responder(gs.carregar_json(gs.ESCRITORIO))
             if rota.startswith("/baixar/"):
-                arq = dentro(SAIDA, rota[8:])
+                arq = dentro(pasta_saida(), rota[8:])
                 if arq.is_file():
                     tipo = "text/csv; charset=utf-8" if arq.suffix == ".csv" else "text/plain; charset=iso-8859-1"
                     return self.responder(arq.read_bytes(), tipo, extra={
                         "Content-Disposition": f"attachment; filename*=UTF-8''{quote(arq.name)}"})
             if rota.startswith("/api/ver/"):
-                arq = dentro(SAIDA, rota[9:])
+                arq = dentro(pasta_saida(), rota[9:])
                 if arq.is_file():
                     de = (q.get("de") or ["0"])[0]
                     de = int(de) if de.isdigit() else 0
@@ -417,6 +474,8 @@ class Painel(BaseHTTPRequestHandler):
                 return self.responder({"nome": destino.name})
             if rota == "/api/converter":
                 return self.responder(converter(json.loads(self.corpo() or b"{}")))
+            if rota == "/api/pasta":
+                return self.responder(mudar_pasta(json.loads(self.corpo() or b"{}")))
             if rota == "/api/ajustar":
                 return self.responder(ajustar(json.loads(self.corpo() or b"{}")))
             if rota == "/api/encerrar":  # usado pelo instalador antes de trocar os arquivos
@@ -424,8 +483,9 @@ class Painel(BaseHTTPRequestHandler):
                 threading.Thread(target=self.server.shutdown, daemon=True).start()
                 return
             if rota == "/api/abrir-pasta":
-                SAIDA.mkdir(parents=True, exist_ok=True)
-                abrir_pasta(SAIDA)
+                pasta = pasta_saida()
+                pasta.mkdir(parents=True, exist_ok=True)
+                abrir_pasta(pasta)
                 return self.responder({"ok": True})
             if rota == "/api/escritorio":
                 dados = {k: str(v).strip() for k, v in json.loads(self.corpo() or b"{}").items() if isinstance(k, str)}
@@ -452,7 +512,7 @@ class Painel(BaseHTTPRequestHandler):
                 arq.unlink(missing_ok=True)
                 return self.responder({"ok": True})
             if rota.startswith("/api/gerado/"):
-                arq = dentro(SAIDA, rota[12:])
+                arq = dentro(pasta_saida(), rota[12:])
                 arq.unlink(missing_ok=True)
                 arq.with_name(arq.stem + "_pendencias.csv").unlink(missing_ok=True)
                 arq.with_name("DOMINIO_" + arq.name.removeprefix("SPED_")).unlink(missing_ok=True)
