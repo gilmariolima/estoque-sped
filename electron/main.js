@@ -119,6 +119,10 @@ function abrirJanela() {
     if (/^https?:\/\//.test(url)) shell.openExternal(url)
   })
 
+  // O painel não usa câmera, microfone, notificações etc.: nada é concedido
+  janela.webContents.session.setPermissionRequestHandler((_wc, _permissao, responder) => responder(false))
+  janela.webContents.session.setPermissionCheckHandler(() => false)
+
   // "Baixar SPED": pergunta onde salvar, já sugerindo a pasta Downloads e o nome do arquivo.
   janela.webContents.session.on('will-download', (_e, item) => {
     item.setSaveDialogOptions({
@@ -134,7 +138,7 @@ function abrirJanela() {
     janela = null
   })
 
-  janela.loadURL(motor.url)
+  janela.loadURL(motor.entrada)
 }
 
 // ---------- erros ----------

@@ -122,7 +122,7 @@ function desenharArquivos(infos) {
       <td class="td canhoto"><span class="carbono">${String(n + 1).padStart(2, "0")}</span></td>
       <td class="td"><span class="nome-arq">${esc(nome)}</span></td>
       <td class="td col-larga">${esc(i.tipo || "")}${i.valores === false ? ' <span class="sub">sem valores</span>' : ""}</td>
-      <td class="td direita carbono">${i.itens != null ? milhar(i.itens) : ""}</td>
+      <td class="td direita carbono">${i.itens != null ? esc(milhar(i.itens)) : ""}</td>
       <td class="td">${uso}</td>
       <td class="td"><div class="acoes">${trocar}<button class="icon-btn perigo" data-tirar="${esc(nome)}" title="Tirar arquivo"><i class="fa-solid fa-xmark"></i></button></div></td>
     </tr>`;
@@ -167,9 +167,9 @@ function desenharItens() {
       <td class="td d-col">${esc(i.d)}</td>
       <td class="td col-larga carbono" style="font-size:15px">${esc(i.n)}</td>
       <td class="td col-larga">${esc(i.u)}</td>
-      <td class="td direita carbono">${milhar(i.q)}</td>
-      <td class="td direita col-larga carbono">${milhar(i.vu)}</td>
-      <td class="td direita carbono">${milhar(i.vt)}</td>
+      <td class="td direita carbono">${esc(milhar(i.q))}</td>
+      <td class="td direita col-larga carbono">${esc(milhar(i.vu))}</td>
+      <td class="td direita carbono">${esc(milhar(i.vt))}</td>
       <td class="td">${i.p.length ? `<span class="carimbo c-pend" title="${esc(i.p.join("\n"))}">Pendência</span>` : ""}</td>
     </tr>`).join("")
     : `<tr><td colspan="8" class="vazio-lista"><i class="fa-solid fa-magnifying-glass"></i><br>Nenhum item</td></tr>`;
@@ -182,7 +182,7 @@ function preencherFormulario(campos) {
   const form = $("#formEmp");
   // O que a pessoa já digitou fica: só preenche os campos que ela não mexeu
   Object.entries(campos).forEach(([k, v]) => { if (form.elements[k] && !estado.editados.has(k)) form.elements[k].value = v; });
-  ["nome", "cnpj", "ie", "uf", "cod_mun"].forEach((k) => form.elements[k].classList.toggle("falta", !form.elements[k].value.trim()));
+  ["nome", "cnpj", "ie", "uf", "cod_mun", "cep", "end", "bairro"].forEach((k) => form.elements[k].classList.toggle("falta", !form.elements[k].value.trim()));
   form.elements.data_inv.classList.remove("falta");
   form.elements.periodo.classList.remove("falta");
 }
@@ -197,7 +197,8 @@ function desenharResultado() {
   const linhas = [["Total do inventário", milhar(r.resumo.total)]];
   if (r.resumo.origem && r.resumo.origem !== r.resumo.total) linhas.push(["Total no arquivo do cliente", milhar(r.resumo.origem)]);
   linhas.push(["Período", r.resumo.periodo], ["Leiaute", r.resumo.leiaute], ["Linhas do arquivo", milhar(r.resumo.linhas)]);
-  $("#resumo").innerHTML = linhas.map(([a, b]) => `<p><span>${a}</span><span class="carbono">${esc(b)}</span></p>`).join("");
+  if (r.resumo.conteudo) linhas.push(["Conteúdo", r.resumo.conteudo]);
+  $("#resumo").innerHTML = linhas.map(([a, b]) => `<p><span>${esc(a)}</span><span class="carbono">${esc(b)}</span></p>`).join("");
 
   const avisos = r.gerais.map((g) => g.msg);
   if (r.fora.length) avisos.push(`${r.fora.length} ${r.fora.length > 1 ? "itens ficaram" : "item ficou"} fora do arquivo`);
@@ -284,8 +285,8 @@ async function carregarGerados() {
       <td class="td canhoto"><span class="carbono">${esc(g.inventario || "—")}</span><small title="${esc(g.arquivo)}">${esc(g.arquivo.replace(/^SPED_/, "").replace(/\.txt$/, ""))}</small></td>
       <td class="td">${esc(g.nome)}</td>
       <td class="td col-larga carbono" style="font-size:15px">${esc(g.cnpj)}</td>
-      <td class="td direita carbono">${milhar(g.itens)}</td>
-      <td class="td direita carbono">${milhar(g.total)}</td>
+      <td class="td direita carbono">${esc(milhar(g.itens))}</td>
+      <td class="td direita carbono">${esc(milhar(g.total))}</td>
       <td class="td col-larga">${esc(g.data)}</td>
       <td class="td"><div class="acoes">
         <a class="btn btn-primary" style="height:40px" href="/baixar/${encodeURIComponent(g.arquivo)}"><i class="fa-solid fa-download"></i>Baixar</a>

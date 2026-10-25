@@ -1,0 +1,590 @@
+"""Casos da revisão do conversor: cada teste reproduz uma entrada que antes gerava valor errado,
+perdia item sem aviso ou saía num arquivo que o PVA recusa. Todo SPED gerado aqui passa pela
+conferência do leiaute (validar), que segue o Guia Prático EFD ICMS/IPI."""
+
+import os
+import re
+import sys
+import tempfile
+import unittest
+from datetime import date
+from decimal import Decimal
+from pathlib import Path
+from unittest import mock
+
+APP = Path(__file__).resolve().parents[1]
+ARQ = Path(__file__).resolve().parent / "arquivos"
+TMP = Path(tempfile.mkdtemp(prefix="estoque-correcoes-"))
+os.environ.setdefault("ESTOQUE_DADOS", str(TMP / "dados"))
+sys.path.insert(0, str(APP))
+
+import gerar_sped as gs  # noqa: E402
+
+# Quantidade de campos de cada registro (REG incluído), pelo Guia Prático
+LEIAUTE = {
+    "0000": 15, "0001": 2, "0002": 2, "0005": 10, "0100": 14, "0150": 13, "0190": 3, "0200": 13, "0990": 2,
+    "B001": 2, "B990": 2, "C001": 2, "C990": 2, "D001": 2, "D990": 2, "E001": 2, "E100": 3, "E110": 15, "E990": 2,
+    "G001": 2, "G990": 2, "H001": 2, "H005": 4, "H010": 11, "H990": 2, "K001": 2, "K990": 2,
+    "1001": 2, "1010": 14, "1990": 2, "9001": 2, "9900": 3, "9990": 2, "9999": 2,
+}
+N2, N3, N6 = re.compile(r"\d+,\d{2}"), re.compile(r"\d+,\d{3}"), re.compile(r"\d+,\d{6}")
+
+
+def validar(teste, linhas):
+    """Confere o arquivo como o PVA: leiaute de cada registro, totalizadores, formatos e as
+    amarrações entre registros (0190 x unidades, 0200 x H010, 0150 x COD_PART)."""
+    reg = [l[1:-1].split("|") for l in linhas]
+    for l, c in zip(linhas, reg):
+        teste.assertTrue(l.startswith("|") and l.endswith("|"), l)
+        teste.assertIn(c[0], LEIAUTE, l)
+        teste.assertEqual(len(c), LEIAUTE[c[0]], f"quantidade de campos: {l}")
+        l.encode("latin-1")  # ISO-8859-1
+    por = lambda r: [c for c in reg if c[0] == r]
+    z = por("0000")[0]
+    ini, fim = gs.data_ddmmaaaa(z[3]), gs.data_ddmmaaaa(z[4])
+    teste.assertEqual(ini.day, 1)
+    teste.assertEqual((fim.month, fim.day), (ini.month, gs.calendar.monthrange(fim.year, fim.month)[1]))
+    teste.assertEqual(z[1], gs.VERSAO_LEIAUTE.get(fim.year, z[1]))
+    # totalizadores
+    teste.assertEqual(int(por("0990")[0][1]), sum(c[0][0] == "0" for c in reg))
+    teste.assertEqual(int(por("H990")[0][1]), sum(c[0][0] == "H" for c in reg))
+    teste.assertEqual(int(por("9990")[0][1]), sum(c[0][0] == "9" for c in reg))
+    teste.assertEqual(int(por("9999")[0][1]), len(reg))
+    cont = {c[1]: int(c[2]) for c in por("9900")}
+    teste.assertEqual(set(cont), {c[0] for c in reg})
+    for r, n in cont.items():
+        teste.assertEqual(n, len(por(r)), r)
+    # inventário
+    h005, h010 = por("H005"), por("H010")
+    teste.assertEqual(len(h005), 1)
+    teste.assertLessEqual(gs.data_ddmmaaaa(h005[0][1]), fim)
+    teste.assertEqual(h005[0][3], "01")
+    teste.assertRegex(h005[0][2], N2)
+    teste.assertEqual(gs.num(h005[0][2]), sum(gs.num(c[5]) for c in h010))
+    unidades, cad = {c[1] for c in por("0190")}, {c[1]: c for c in por("0200")}
+    parts = {c[1] for c in por("0150")}
+    teste.assertEqual(len(cad), len(por("0200")), "0200 repetido")
+    for c in h010:
+        teste.assertIn(c[1], cad)
+        teste.assertLessEqual(len(c[1]), 60)
+        teste.assertIn(c[2], unidades)
+        teste.assertEqual(c[2], cad[c[1]][5], "unidade do H010 = unidade do 0200")
+        teste.assertRegex(c[3], N3)
+        teste.assertRegex(c[4], N6)
+        teste.assertRegex(c[5], N2)
+        teste.assertRegex(c[10], N2)
+        teste.assertGreater(gs.num(c[3]), 0)
+        teste.assertLessEqual(gs.num(c[10]), gs.num(c[5]))
+        teste.assertIn(c[6], ("0", "1", "2"))
+        if c[6] == "0":
+            teste.assertEqual(c[7], "")
+        else:
+            teste.assertIn(c[7], parts, "COD_PART do H010 sem 0150")
+    for c in cad.values():
+        teste.assertIn(c[6], gs.TIPOS_ITEM)
+        teste.assertIn(len(c[7]), (0, 8))
+        teste.assertIn(len(c[12]), (0, 7))
+        teste.assertIn(c[5], unidades)
+    for c in por("0150"):
+        teste.assertTrue(c[2] and c[3] and (len(c[7]) == 7 or c[3].lstrip("0") != "1058"))
+
+
+def arquivo(nome, conteudo, encoding="utf-8"):
+    p = TMP / nome
+    if isinstance(conteudo, bytes):
+        p.write_bytes(conteudo)
+    else:
+        p.write_text(conteudo, encoding=encoding)
+    return p
+
+
+class Base(unittest.TestCase):
+    def gerar(self, *caminhos, **opcoes):
+        fontes = [gs.ler_arquivo(Path(c)) for c in caminhos]
+        principal = gs.escolher_principal(fontes)
+        opcoes.setdefault("data_inv", "31/12/2025")
+        res = gs.converter(principal, [f for f in fontes if f is not principal], gs.opcoes(sem_consulta=True, **opcoes))
+        validar(self, res.registros)
+        return res
+
+    def reg(self, res, r):
+        return [l[1:-1].split("|") for l in res.registros if l.startswith(f"|{r}|")]
+
+    def h010(self, res):
+        return {c[1]: c for c in self.reg(res, "H010")}
+
+    def pend(self, res, trecho, tipo=None):
+        return [p for p in res.pendencias if trecho in p[2] and (tipo is None or p[0] == tipo)]
+
+
+class Numeros(unittest.TestCase):
+    """Itens 1, 2, 25 e 26: o separador decimal e os formatos que o Excel e os ERPs gravam."""
+
+    def test_virgula_e_ponto_o_ultimo_e_o_decimal(self):
+        self.assertEqual(gs.num("1,234.56"), Decimal("1234.56"))
+        self.assertEqual(gs.num("1.234,56"), Decimal("1234.56"))
+        self.assertEqual(gs.num("1,800,600.00"), Decimal("1800600.00"))
+        self.assertEqual(gs.num("1.800.600,00"), Decimal("1800600.00"))
+        self.assertEqual(gs.num("R$ 1.234,56"), Decimal("1234.56"))
+
+    def test_um_separador_so(self):
+        self.assertEqual(gs.num("2,5"), Decimal("2.5"))
+        self.assertEqual(gs.num("2.5"), Decimal("2.5"))
+        self.assertEqual(gs.num("1.500"), Decimal("1.500"))  # sem pista do arquivo: decimal
+        self.assertEqual(gs.num("1.500", br=True), Decimal("1500"))
+        self.assertEqual(gs.num("1,500", en=True), Decimal("1500"))
+        self.assertEqual(gs.num("1,5", en=True), Decimal("1.5"))  # não é milhar
+        self.assertEqual(gs.num("1.234.567"), Decimal("1234567"))
+        self.assertEqual(gs.num("1,234,567"), Decimal("1234567"))
+
+    def test_negativo_contabil(self):
+        self.assertEqual(gs.num("(1.234,56)"), Decimal("-1234.56"))
+        self.assertEqual(gs.num("1.234,56-"), Decimal("-1234.56"))
+        self.assertIsNone(gs.num("()"))
+        self.assertIsNone(gs.num("-"))
+
+    def test_celulas_que_nao_sao_numero(self):
+        self.assertIsNone(gs.num(True))  # antes: InvalidOperation derrubava a planilha
+        self.assertIsNone(gs.num(False))
+        self.assertIsNone(gs.num(float("nan")))
+        self.assertIsNone(gs.num(float("inf")))
+        self.assertIsNone(gs.num("NaN"))
+        self.assertIsNone(gs.num("Infinity"))
+        self.assertIsNone(gs.num("abc"))
+        self.assertEqual(gs.num(10), Decimal(10))
+
+    def test_estilo_do_arquivo(self):
+        self.assertEqual(gs.estilo_numeros(["1.500", "2,50"], "en"), ("br", ""))
+        self.assertEqual(gs.estilo_numeros(["1,500", "2.50"], "br"), ("en", ""))
+        self.assertEqual(gs.estilo_numeros(["0,500"], "en")[0], "br")  # 0,500 não é milhar
+        estilo, aviso = gs.estilo_numeros(["1.500", "3.000"], "br")
+        self.assertEqual(estilo, "br")
+        self.assertIn("1500", aviso)
+        self.assertIn("mistura", gs.estilo_numeros(["1.234,56", "1,234.56"], "br")[1])
+
+
+class Planilhas(Base):
+    def test_csv_ingles_com_milhar(self):
+        # Antes: 1.800.600,00 virava 1,80, sem aviso
+        p = arquivo("en.csv", 'SKU,Description,Unit,Qty,Unit Cost,Total\nK1,CABO,UN,"1,200","1,500.50","1,800,600.00"\n')
+        h = self.h010(self.gerar(p))
+        self.assertEqual(h["K1"][3:6], ["1200,000", "1500,500000", "1800600,00"])
+
+    def test_csv_brasileiro_so_com_inteiros(self):
+        # Antes: "1.500" virava 1,5 e "3.000" virava 3, sem aviso
+        p = arquivo("br_int.csv", "Codigo;Descricao;Qtd;Valor Total\nA1;CANETA;1.500;3.000\n")
+        res = self.gerar(p)
+        self.assertEqual(self.h010(res)["A1"][3:6], ["1500,000", "2,000000", "3000,00"])
+        self.assertTrue(self.pend(res, "podem ser milhar ou decimal", "arquivo"))
+
+    def test_csv_com_virgula_so_com_inteiros(self):
+        p = arquivo("en_int.csv", 'Code,Description,Qty,Total\nA1,PEN,"1,500","3,000"\n')
+        res = self.gerar(p)
+        self.assertEqual(self.h010(res)["A1"][3], "1500,000")
+        self.assertTrue(self.pend(res, "formato inglês"))
+
+    def test_csv_ponto_e_virgula_com_muitas_virgulas_decimais(self):
+        # Mais vírgulas (decimais) que pontos e vírgulas: o separador vem do cabeçalho
+        p = arquivo("virgulas.csv", "Codigo;Descricao;Qtd;Valor Unit\nA1;X, Y, Z;1,5;2,25\nA2;W, V;2,5;1,75\n")
+        h = self.h010(self.gerar(p))
+        self.assertEqual((h["A1"][3], h["A2"][4]), ("1,500", "1,750000"))
+
+    def test_linha_sem_codigo_entra_com_codigo_gerado(self):
+        # Antes: a linha sumia do SPED sem aviso
+        p = arquivo("semcod.csv", "Codigo;Descricao;Qtd;Valor Unit\nA1;CANETA;10;2,00\n;LAPIS SEM CODIGO;5;1,00\n")
+        res = self.gerar(p)
+        h = self.h010(res)
+        self.assertEqual(h["SEMCOD0001"][3:6], ["5,000", "1,000000", "5,00"])
+        self.assertTrue(self.pend(res, "linha sem código"))
+        self.assertEqual(res.total, Decimal("25.00"))
+
+    def test_linha_sem_codigo_e_sem_descricao_com_numeros_e_avisada(self):
+        p = arquivo("subtotal.csv", "Codigo;Descricao;Qtd;Valor Unit;Valor Total\nA1;CANETA;10;2,00;20,00\n;;10;;20,00\n")
+        res = self.gerar(p)
+        self.assertEqual(list(self.h010(res)), ["A1"])
+        self.assertTrue(self.pend(res, "linha 3 sem código nem descrição"))
+
+    def test_titulo_de_grupo_sem_numeros_nao_e_item(self):
+        p = arquivo("grupo.csv", "Codigo;Descricao;Qtd;Valor Unit\n;BEBIDAS;;\nA1;REFRI;1;5,00\n")
+        res = self.gerar(p)
+        self.assertEqual(list(self.h010(res)), ["A1"])
+        self.assertFalse(self.pend(res, "SEMCOD"))
+
+    def test_xls_com_ncm_cest_e_tipo_numericos(self):
+        # O .xls guarda número como decimal: 94036000.0 virava "940360000" (NCM apagado) e
+        # 1022990.0 virava "10229900" (NCM errado, sem aviso); o tipo 1.0 virava "10"
+        res = self.gerar(ARQ / "ncm_numerico.xls")
+        cad = {c[1]: c for c in self.reg(res, "0200")}
+        self.assertEqual((cad["101"][7], cad["101"][12], cad["101"][6]), ("94036000", "2803600", "00"))
+        self.assertEqual((cad["102"][7], cad["102"][6]), ("01022990", "01"))
+        self.assertEqual(cad["103"][7], "10063021")
+        self.assertFalse(self.pend(res, "NCM"))
+
+    def test_quantidade_em_terceiros_sem_participante_fica_fora_com_aviso(self):
+        # Antes: os 7 em terceiros sumiam sem aviso
+        p = arquivo("terc.csv", "Codigo;Descricao;Qtd. no estab;Qtd. em terceiros;Valor Unit\nA1;CANETA;10;7;2,00\n")
+        res = self.gerar(p)
+        self.assertEqual([(c[1], c[3], c[6]) for c in self.reg(res, "H010")], [("A1", "10,000", "0")])
+        self.assertTrue(self.pend(res, "sem o participante", "item"))
+        self.assertEqual([(i.codigo, i.qtd, i.ind_prop) for i in res.fora], [("A1", Decimal(7), "1")])
+
+    def test_quantidade_em_terceiros_com_cnpj_gera_h010_e_0150(self):
+        consulta = {"nome": "DEPOSITO GERAL LTDA", "uf": "CE", "cod_mun": "2304400", "cep": "60000000",
+                    "end": "RUA B", "num": "20", "compl": "", "bairro": "CENTRO", "fantasia": "", "fone": "", "email": ""}
+        p = arquivo("terc_cnpj.csv", "Codigo;Descricao;Qtd. no estab;Qtd. em terceiros;Valor Unit;CNPJ do terceiro\n"
+                                     "A1;CANETA;10;7;2,00;11.444.777/0001-61\nA2;LAPIS;0;3;1,00;11.444.777/0001-61\n")
+        fontes = [gs.ler_arquivo(p)]
+        with mock.patch.object(gs, "consultar_cnpj", return_value=consulta) as c:
+            res = gs.converter(fontes[0], [], gs.opcoes(data_inv="31/12/2025", sem_consulta=False, cnpj="11222333000181",
+                                                         uf="CE", cod_mun="2304400", cep="60000000", end="X", bairro="Y"))
+        self.assertIn(mock.call("11444777000161"), c.call_args_list)
+        validar(self, res.registros)
+        h = [(c[1], c[3], c[6], c[7]) for c in self.reg(res, "H010")]
+        self.assertEqual(h, [("A1", "10,000", "0", ""), ("A1", "7,000", "1", "11444777000161"),
+                             ("A2", "3,000", "1", "11444777000161")])
+        self.assertEqual(self.reg(res, "0150"), [["0150", "11444777000161", "DEPOSITO GERAL LTDA", "1058", "11444777000161",
+                                                  "", "", "2304400", "", "RUA B", "20", "", "CENTRO"]])
+        self.assertEqual(len(self.reg(res, "0200")), 2)
+        self.assertEqual(res.total, Decimal("37.00"))
+
+    def test_aliquota_de_icms_nao_e_icms_recuperavel(self):
+        # Antes: "Alíquota ICMS" 18 virava ICMS recuperável e o VL_ITEM_IR saía 2,00
+        p = arquivo("aliq.csv", "Codigo;Descricao;Qtd;Valor Unit;Aliquota ICMS;Base ICMS\nA1;CANETA;10;2,00;18;20,00\n")
+        self.assertEqual(self.h010(self.gerar(p))["A1"][10], "20,00")
+
+    def test_icms_recuperavel_maior_que_o_item_e_ignorado(self):
+        p = arquivo("icms.csv", "Codigo;Descricao;Qtd;Valor Unit;ICMS Recuperavel\nA1;CANETA;10;2,00;50,00\nA2;LAPIS;1;10,00;1,80\n")
+        res = self.gerar(p)
+        h = self.h010(res)
+        self.assertEqual((h["A1"][10], h["A2"][10]), ("20,00", "8,20"))
+        self.assertTrue(self.pend(res, "maior que o valor do item"))
+
+    def test_outra_aba_com_inventario_e_avisada(self):
+        import openpyxl
+        caminho = TMP / "duas_abas.xlsx"
+        wb = openpyxl.Workbook()
+        for nome, cod in (("Loja 1", "L1"), ("Loja 2", "L2")):
+            ws = wb.create_sheet(nome)
+            ws.append(["Código", "Descrição", "Quantidade", "Valor Unitário"])
+            ws.append([cod, "ITEM", 1, 10])
+        wb.remove(wb["Sheet"])
+        wb.save(caminho)
+        res = self.gerar(caminho)
+        self.assertEqual(list(self.h010(res)), ["L1"])
+        self.assertTrue(self.pend(res, "a aba \"Loja 2\" também tem um inventário"))
+
+    def test_aba_de_cadastro_antes_do_inventario(self):
+        import openpyxl
+        caminho = TMP / "cadastro_antes.xlsx"
+        wb = openpyxl.Workbook()
+        ws = wb.active
+        ws.title = "Cadastro"
+        ws.append(["Código", "Descrição", "NCM"])
+        ws.append(["C1", "CANETA", "96081000"])
+        ws = wb.create_sheet("Inventário")
+        ws.append(["Código", "Descrição", "Quantidade", "Valor Unitário"])
+        ws.append(["C1", "CANETA", 4, 2.5])
+        wb.save(caminho)
+        self.assertEqual(self.h010(self.gerar(caminho))["C1"][5], "10,00")
+
+    def test_csv_com_quebra_de_linha_dentro_de_aspas(self):
+        p = arquivo("aspas.csv", 'Codigo;Descricao;Qtd;Valor Unit\nA1;"CANETA\nAZUL";1;2,00\nA2;LAPIS;1;1,00\n')
+        res = self.gerar(p)
+        self.assertEqual(self.reg(res, "0200")[0][2], "CANETA AZUL")
+        self.assertEqual(len(self.reg(res, "H010")), 2)
+
+    def test_celula_booleana_nao_derruba_a_planilha(self):
+        import openpyxl
+        caminho = TMP / "bool.xlsx"
+        wb = openpyxl.Workbook()
+        wb.active.append(["Código", "Descrição", "Quantidade", "Valor Unitário"])
+        wb.active.append(["B1", "ITEM", True, 2])
+        wb.active.append(["B2", "ITEM 2", 1, 2])
+        wb.save(caminho)
+        res = self.gerar(caminho)
+        self.assertEqual(list(self.h010(res)), ["B2"])
+        self.assertTrue(self.pend(res, "sem quantidade"))
+
+    def test_negativo_contabil_fica_fora_com_o_motivo_certo(self):
+        p = arquivo("contabil.csv", "Codigo;Descricao;Qtd;Valor Unit\nA1;X;2;(10,00)\nA2;Y;1;5,00\n")
+        res = self.gerar(p)
+        self.assertEqual(list(self.h010(res)), ["A2"])
+        self.assertTrue(any(c == "A1" and "negativo" in m for _, c, m in res.pendencias))
+
+    def test_indicador_de_propriedade_na_planilha(self):
+        p = arquivo("prop.csv", "Codigo;Descricao;Qtd;Valor Unit;Ind. Prop\nA1;X;2;1,00;0\nA2;Y;1;5,00;X\n")
+        res = self.gerar(p)
+        self.assertEqual({c[1]: c[6] for c in self.reg(res, "H010")}, {"A1": "0", "A2": "0"})
+        self.assertTrue(self.pend(res, "não é 0, 1 ou 2"))
+
+
+class Relatorio(Base):
+    CAB = "REGISTRO DE INVENTARIO\nFirma: LOJA\nEstoque existente em 31/12/2025\n"
+
+    def test_linha_sem_ncm_entra(self):
+        # Antes: a linha sem NCM sumia sem aviso
+        rel = self.CAB + ("94036000 U3424 CADEIRA PRETA     UN      10,000      150,0000      1.500,00\n"
+                          "         X55 ITEM SEM NCM        UN       2,000       10,0000         20,00\n")
+        res = self.gerar(arquivo("rel_sem_ncm.txt", rel))
+        h = self.h010(res)
+        self.assertEqual(h["X55"][3:6], ["2,000", "10,000000", "20,00"])
+        self.assertEqual(res.total, Decimal("1520.00"))
+
+    def test_linha_com_tres_numeros_que_nao_casa_vira_pendencia(self):
+        rel = self.CAB + ("94036000 U3424 CADEIRA PRETA     UN      10,000      150,0000      1.500,00\n"
+                          "         ITEM COM UNIDADE COMPRIDA UNIDADES  2,000  10,0000  20,00\n")
+        res = self.gerar(arquivo("rel_quebrado2.txt", rel))
+        self.assertEqual(len(self.reg(res, "H010")), 1)
+        self.assertTrue(self.pend(res, "linha não lida", "arquivo"))
+
+    def test_rotulo_de_total_com_tres_numeros_nao_e_item(self):
+        rel = self.CAB + ("94036000 U3424 CADEIRA PRETA     UN      10,000      150,0000      1.500,00\n"
+                          "         TOTAL DO GRUPO          UN      10,000      150,0000      1.500,00\n")
+        res = self.gerar(arquivo("rel_total.txt", rel))
+        self.assertEqual(list(self.h010(res)), ["U3424"])
+        # mas um produto com "TOTAL" no nome continua sendo item
+        rel = self.CAB + "         TOTAL FLEX 1L           UN       1,000       30,0000         30,00\n"
+        self.assertEqual(self.reg(self.gerar(arquivo("rel_total2.txt", rel)), "0200")[0][2], "TOTAL FLEX 1L")
+
+    def test_codigo_separado_com_espaco_e_avisado(self):
+        rel = self.CAB + "94036000 X100 50 CADEIRAS        UN       1,000       10,0000         10,00\n"
+        res = self.gerar(arquivo("rel_cod.txt", rel))
+        self.assertTrue(self.pend(res, "separado da descrição pelo app"))
+
+
+class Sped(Base):
+    Z = "|0000|019|0|01122025|31122025|LOJA X|11222333000181||CE|061234567|2304400||||A|1|\n"
+
+    def test_0200_com_campos_vazios_no_fim(self):
+        # Antes: o strip("|") comia os campos vazios e o 0200 era descartado (descrição perdida)
+        txt = self.Z + "|0200|A|CANETA AZUL|||UN|00|\n|H005|31122025|20,00|01|\n|H010|A|UN|10,000|2,000000|20,00|0||||20,00|\n"
+        res = self.gerar(arquivo("sped0200.txt", txt))
+        self.assertEqual(self.reg(res, "0200")[0][2], "CANETA AZUL")
+        self.assertFalse(self.pend(res, "sem descrição"))
+
+    def test_campos_do_h010_mantidos(self):
+        txt = (self.Z + "|0150|FORN1|FORNECEDOR|1058|11444777000161|||2304400||RUA|1||BAIRRO|\n"
+               "|0200|A|CANETA|||UN|00|96081000|||||\n|H005|31122025|20,00|01|\n"
+               "|H010|A|UN|10,000|2,000000|20,00|1|FORN1|EM CONSIGNACAO|1.1.3|15,00|\n")
+        res = self.gerar(arquivo("spedterc.txt", txt))
+        self.assertEqual(self.reg(res, "H010")[0][6:], ["1", "FORN1", "EM CONSIGNACAO", "1.1.3", "15,00"])
+        self.assertEqual(self.reg(res, "0150")[0][1:3], ["FORN1", "FORNECEDOR"])
+        self.assertFalse(self.pend(res, "COD_PART"))
+
+    def test_participante_estrangeiro_sem_municipio(self):
+        txt = ("|0150|EXT1|DISTRIBUIDOR EXTERIOR|5860||||||RUA X|1|||\n|0200|A|CANETA|||UN|00|96081000|||||\n"
+               "|H005|31122025|20,00|01|\n|H010|A|UN|10,000|2,000000|20,00|1|EXT1|||20,00|\n")
+        res = self.gerar(arquivo("sped_ext.txt", txt))
+        self.assertEqual(self.reg(res, "0150")[0][1:4], ["EXT1", "DISTRIBUIDOR EXTERIOR", "5860"])
+        self.assertEqual(self.reg(res, "H010")[0][7], "EXT1")
+
+    def test_participante_sem_dados_tira_o_item(self):
+        txt = ("|0200|A|CANETA|||UN|00|96081000|||||\n|H005|31122025|20,00|01|\n"
+               "|H010|A|UN|10,000|2,000000|20,00|0||||20,00|\n|H010|B|UN|1,000|5,000000|5,00|2|SEM0150|||5,00|\n")
+        res = self.gerar(arquivo("sped_sem0150.txt", txt))
+        self.assertEqual(list(self.h010(res)), ["A"])
+        self.assertTrue(self.pend(res, "participante SEM0150 sem nome e município"))
+
+    def test_dois_inventarios_no_arquivo(self):
+        # Antes: os H010 dos dois H005 eram somados num só inventário
+        txt = ("|0200|A|CANETA|||UN|00|96081000|||||\n|H005|31122025|20,00|01|\n|H010|A|UN|10,000|2,000000|20,00|0||||20,00|\n"
+               "|H005|31122025|30,00|05|\n|H010|A|UN|15,000|2,000000|30,00|0||||30,00|\n")
+        res = self.gerar(arquivo("sped2h005.txt", txt))
+        self.assertEqual(self.h010(res)["A"][3], "10,000")
+        self.assertEqual(res.total, Decimal("20.00"))
+        self.assertTrue(self.pend(res, "o arquivo tem 2 inventários"))
+
+    def test_sped_com_bom(self):
+        txt = "﻿|0200|A|CANETA|||UN|00|96081000|||||\n|H005|31122025|20,00|01|\n|H010|A|UN|10,000|2,000000|20,00|0||||20,00|\n"
+        p = arquivo("sped_bom.txt", txt.encode("utf-8"))
+        self.assertEqual(gs.ler_arquivo(p).tipo, "SPED / bloco H")
+
+
+class Fortes(Base):
+    def test_indicador_desconhecido_e_avisado(self):
+        fs = ("CAB|001|1|FORTES|LOJA|11222333000181|31122025|\nPRO|1|ITEM|A1|96081000|UN|||001|001|\n"
+              "IIV|1|31122025|1|1,000|UN|2,0000|09|2,00|\n")
+        res = self.gerar(arquivo("prop.FS", fs))
+        self.assertTrue(self.pend(res, "indicador de propriedade \"09\" desconhecido"))
+
+    def test_item_de_terceiros_sem_participante_nao_invalida_o_arquivo(self):
+        fs = ("CAB|001|1|FORTES|LOJA|11222333000181|31122025|\nPRO|1|ITEM|A1|96081000|UN|||001|001|\n"
+              "PRO|2|ITEM2|A2|96081000|UN|||001|001|\n"
+              "IIV|1|31122025|1|1,000|UN|2,0000|01|2,00|\nIIV|1|31122025|2|1,000|UN|3,0000|03|3,00|\n")
+        res = self.gerar(arquivo("terc.FS", fs))
+        self.assertEqual(list(self.h010(res)), ["A1"])
+        self.assertEqual([i.codigo for i in res.fora], ["A2"])
+
+
+class Texto(Base):
+    def test_caracteres_do_word_viram_equivalentes(self):
+        p = arquivo("word.csv", "Codigo;Descricao;Qtd;Valor Unit\nA1;CANETA – AZUL “PREMIUM” 5€ …;10;2,00\n")
+        res = self.gerar(p)
+        self.assertEqual(self.reg(res, "0200")[0][2], 'CANETA - AZUL "PREMIUM" 5EUR ...')
+        self.assertFalse(self.pend(res, "ISO-8859-1"))
+
+    def test_caractere_sem_equivalente_e_avisado(self):
+        p = arquivo("chines.csv", "Codigo;Descricao;Qtd;Valor Unit\nA1;CANETA 笔 ŝ;10;2,00\n")
+        res = self.gerar(p)
+        self.assertEqual(self.reg(res, "0200")[0][2], "CANETA ? s")
+        self.assertTrue(self.pend(res, "ISO-8859-1"))
+
+    def test_controle_c1_e_acento_decomposto(self):
+        self.assertEqual(gs.texto("A\x85B\x9fC"), "A B C")
+        self.assertEqual(gs.texto("café"), "café")  # Mac grava o acento separado
+        self.assertEqual(gs.texto(0), "0")  # antes: o código 0 sumia
+
+    def test_codigo_alterado_e_avisado(self):
+        p = arquivo("codigo.csv", "Codigo;Descricao;Qtd;Valor Unit\nA–1;X;1;1,00\nB|2;Y;1;1,00\n")
+        res = self.gerar(p)
+        self.assertEqual(sorted(self.h010(res)), ["A-1", "B 2"])
+        self.assertEqual(len(self.pend(res, "caracteres que o SPED não aceita")), 2)
+
+    def test_unidade_comprida_e_avisada(self):
+        p = arquivo("unid.csv", "Codigo;Descricao;Unidade;Qtd;Valor Unit\nA1;X;CAIXA12;1;1,00\nA2;Y;Unidade;1;1,00\n")
+        res = self.gerar(p)
+        h = self.h010(res)
+        self.assertEqual((h["A1"][2], h["A2"][2]), ("CAIXA1", "UN"))
+        self.assertEqual(len(self.pend(res, "mais de 6 caracteres")), 1)
+
+    def test_arquivo_gravado_em_iso_8859_1_e_crlf(self):
+        p = arquivo("acentos.csv", "Codigo;Descricao;Qtd;Valor Unit\nA1;CALÇA AÇÃO – “X”;1;1,00\n")
+        res = self.gerar(p)
+        sped, _, _ = gs.gravar(res, TMP / "saida-iso")
+        bruto = sped.read_bytes()
+        self.assertIn('CALÇA AÇÃO - "X"'.encode("latin-1"), bruto)
+        self.assertNotIn(b"?", bruto)
+        self.assertTrue(bruto.endswith(b"|\r\n"))
+        self.assertEqual(bruto.count(b"\n"), bruto.count(b"\r\n"))
+
+
+class Cadastro(Base):
+    def test_tipo_do_item_invalido(self):
+        p = arquivo("tipo.csv", "Codigo;Descricao;Qtd;Valor Unit;Tipo\nA1;X;10;2,00;100\nA2;Y;1;1,00;7\nA3;Z;1;1,00;99\n")
+        res = self.gerar(p, tipo_item="00")
+        tipos = {c[1]: c[6] for c in self.reg(res, "0200")}
+        self.assertEqual(tipos, {"A1": "00", "A2": "07", "A3": "99"})
+        self.assertTrue(self.pend(res, "tipo do item \"100\""))
+
+    def test_cest_invalido(self):
+        p = arquivo("cest.csv", "Codigo;Descricao;Qtd;Valor Unit;CEST\nA1;X;10;2,00;123\nA2;Y;1;1,00;28.036.00\n")
+        res = self.gerar(p)
+        cest = {c[1]: c[12] for c in self.reg(res, "0200")}
+        self.assertEqual(cest, {"A1": "", "A2": "2803600"})
+        self.assertTrue(self.pend(res, "CEST \"123\""))
+
+    def test_itens_do_complemento_fora_do_inventario_sao_avisados(self):
+        inv = arquivo("inv.csv", "Codigo;Descricao;Qtd;Valor Unit\nA1;X;1;1,00\n")
+        esc = arquivo("escriturado.csv", "Codigo;Descricao;Qtd\nA1;X;1\nZ9;OUTRO;5\n")
+        res = self.gerar(inv, esc)
+        self.assertTrue(self.pend(res, "1 item(ns) com quantidade neste arquivo não estão no inventário"))
+        self.assertTrue(self.pend(res, "Z9"))
+
+    def test_icms_somado_quando_codigos_iguais_se_juntam(self):
+        p = arquivo("dup.csv", "Codigo;Descricao;Qtd;Valor Unit;ICMS Recuperavel\nA1;X;1;10,00;1,00\nA1;X;1;10,00;2,00\n")
+        self.assertEqual(self.h010(self.gerar(p))["A1"][10], "17,00")
+
+
+class Fiscal(Base):
+    CSV = "Codigo;Descricao;Qtd;Valor Unit\nE1;X;1;1,00\n"
+
+    def test_periodo_padrao_e_o_segundo_mes_depois_do_inventario(self):
+        res = self.gerar(arquivo("p1.csv", self.CSV))
+        self.assertEqual(self.reg(res, "0000")[0][1:5], ["020", "0", "01022026", "28022026"])
+        self.assertFalse(self.pend(res, "Guia Prático"))
+        self.assertEqual(gs.segundo_mes_depois(date(2025, 11, 30)), (1, 2026))
+        self.assertEqual(gs.segundo_mes_depois(date(2025, 6, 30)), (8, 2025))
+
+    def test_outro_periodo_e_avisado(self):
+        res = self.gerar(arquivo("p2.csv", self.CSV), periodo="12/2025")
+        self.assertEqual(self.reg(res, "0000")[0][1], "019")
+        self.assertTrue(self.pend(res, "vai na EFD de 02/2026", "periodo"))
+
+    def test_motivo_diferente_de_01_e_recusado(self):
+        with self.assertRaisesRegex(gs.ErroConversao, "H020"):
+            self.gerar(arquivo("p3.csv", self.CSV), mot_inv="02")
+
+    def test_versao_do_leiaute(self):
+        self.assertEqual(self.reg(self.gerar(arquivo("p4.csv", self.CSV), data_inv="31/12/2018"), "0000")[0][1], "013")
+        res = self.gerar(arquivo("p5.csv", self.CSV), data_inv="31/12/2027")
+        self.assertEqual(self.reg(res, "0000")[0][1], "020")
+        self.assertTrue(self.pend(res, "não conhece o leiaute de 2028"))
+        with self.assertRaisesRegex(gs.ErroConversao, "cod-ver"):
+            self.gerar(arquivo("p6.csv", self.CSV), data_inv="31/12/2015")
+        self.assertEqual(self.reg(self.gerar(arquivo("p7.csv", self.CSV), data_inv="31/12/2015", cod_ver="009"),
+                                  "0000")[0][1], "009")
+
+    def test_endereco_do_0005_faltando_e_avisado(self):
+        res = self.gerar(arquivo("p8.csv", self.CSV), cnpj="11222333000181", uf="CE", cod_mun="2304400", ie="1", nome="X")
+        for falta in ("CEP", "endereço", "bairro"):
+            self.assertTrue(self.pend(res, f"falta {falta}", "empresa"), falta)
+        res = self.gerar(arquivo("p9.csv", self.CSV), cnpj="11222333000181", uf="CE", cod_mun="2304400", ie="1", nome="X",
+                         cep="60.000-000", end="RUA A", num="10", bairro="CENTRO")
+        self.assertFalse(self.pend(res, "", "empresa"))
+        self.assertEqual(self.reg(res, "0005")[0][2:7], ["60000000", "RUA A", "10", "", "CENTRO"])
+
+    def test_municipio_de_outra_uf_e_avisado(self):
+        res = self.gerar(arquivo("p10.csv", self.CSV), cnpj="11222333000181", uf="SP", cod_mun="2304400")
+        self.assertTrue(self.pend(res, "não é um código IBGE de 7 dígitos da UF SP"))
+        res = self.gerar(arquivo("p11.csv", self.CSV), uf="XX", cod_mun="123")
+        self.assertTrue(self.pend(res, "UF \"XX\" não existe"))
+
+    def test_escritorio_sem_crc_e_cpf_invalido(self):
+        with mock.patch.object(gs, "ESCRITORIO", TMP / "esc.json"):
+            (TMP / "esc.json").write_text('{"nome": "CONTADOR", "cpf": "111.444.777-35"}', encoding="utf-8")
+            res = self.gerar(arquivo("p12.csv", self.CSV))
+            self.assertEqual(self.reg(res, "0100")[0][1:4], ["CONTADOR", "11144477735", ""])
+            self.assertTrue(self.pend(res, "falta o CRC"))
+            self.assertFalse(self.pend(res, "CPF do contabilista"))
+            (TMP / "esc.json").write_text('{"nome": "CONTADOR", "cpf": "111.444.777-00", "crc": "CE-1"}', encoding="utf-8")
+            self.assertTrue(self.pend(self.gerar(arquivo("p13.csv", self.CSV)), "CPF do contabilista"))
+
+    def test_cpf_valido(self):
+        self.assertTrue(gs.cpf_valido("111.444.777-35"))
+        self.assertFalse(gs.cpf_valido("111.444.777-36"))
+        self.assertFalse(gs.cpf_valido("111.111.111-11"))
+
+
+class Pendencias(Base):
+    def test_csv_de_pendencias_nao_executa_formula(self):
+        p = arquivo("formula.csv", 'Codigo;Descricao;Qtd;Valor Unit\n=HYPERLINK("http://x");X;-1;2,00\n+SOMA;Y;1;1,00\n'
+                                   '12"3;Z;0;1,00\n')
+        res = self.gerar(p)
+        _, pend, _ = gs.gravar(res, TMP / "saida-formula")
+        texto = pend.read_text(encoding="utf-8-sig")
+        self.assertIn("'=HYPERLINK", texto)
+        self.assertNotIn(";=HYPERLINK", texto)
+        self.assertNotIn('"=HYPERLINK', texto)
+        self.assertIn('"=""12""""3"""', texto)  # ="12""3" dentro do CSV
+
+    def test_pendencia_fica_no_item_certo(self):
+        # Código repetido com outra descrição é renomeado: o aviso de arredondamento era do
+        # segundo item, mas ia para o primeiro
+        p = arquivo("renomeado.csv", "Codigo;Descricao;Qtd;Valor Unit\nA1;UM;1;1,00\nA1;DOIS;1,2345;1,00\n")
+        res = self.gerar(p)
+        por = {i.codigo: i.pendencias for i in res.itens}
+        self.assertEqual(por["A1"], [])
+        self.assertTrue(any("arredondada" in m for m in por["A1-2"]))
+        self.assertTrue(any(c == "A1-2" and "arredondada" in m for _, c, m in res.pendencias))
+
+
+class ArquivosDeExemplo(Base):
+    """Todo arquivo de exemplo da pasta arquivos/ gera um SPED que passa na conferência."""
+
+    def test_todos_os_exemplos(self):
+        casos = {
+            "erp_titulo_e_total.xlsx": {}, "cod_produto_antigo.xls": {}, "loja_cp1252.csv": {},
+            "relatorio_p7_paginas.txt": {}, "sped_completo.txt": {}, "segunda_aba_reais.xlsx": {},
+            "ingles_utf8_bom.csv": {}, "INV2025.FS": {}, "relatorio_formato_real.txt": {},
+            "fortes_layout_real.FS": {"data_inv": "31/12/2024"}, "modelo_preenchido.xlsx": {}, "ncm_numerico.xls": {},
+            "relatorio_ncm_00.txt": {},
+        }
+        for nome, opc in casos.items():
+            with self.subTest(nome):
+                res = self.gerar(ARQ / nome, **opc)
+                if res.principal.total_declarado is not None and nome != "relatorio_formato_real.txt":
+                    self.assertEqual(res.total, res.principal.total_declarado)
+
+
+if __name__ == "__main__":
+    unittest.main()
