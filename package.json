@@ -1,6 +1,6 @@
 {
   "name": "estoque-sped",
-  "version": "1.0.1",
+  "version": "1.0.2",
   "private": true,
   "description": "Converte o inventário do cliente em SPED Fiscal (EFD ICMS/IPI) com o bloco H.",
   "type": "commonjs",

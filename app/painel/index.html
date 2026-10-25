@@ -10,7 +10,7 @@
 <link rel="manifest" href="/web/app.webmanifest?v=__ICONE__">
 <link rel="stylesheet" href="/web/vendor/fa/css/fontawesome.min.css">
 <link rel="stylesheet" href="/web/vendor/fa/css/solid.min.css">
-<link rel="stylesheet" href="/web/estilo.css?v=8">
+<link rel="stylesheet" href="/web/estilo.css?v=9">
 </head>
 <body>
 <header class="barra">
@@ -57,26 +57,7 @@
 
     <div class="erro-caixa" id="erroConv" hidden></div>
 
-    <div class="grade" id="resultado" hidden>
-      <div class="card">
-        <div class="painel-tit">
-          <div class="segs segs-p" id="segs">
-            <button class="seg on" data-f="todos">Todos <b id="nTodos">0</b></button>
-            <button class="seg" data-f="pend">Com pendência <b id="nPend">0</b></button>
-          </div>
-          <div class="busca" style="flex:1;max-width:340px"><i class="fa-solid fa-magnifying-glass"></i><input class="input" id="busca" placeholder="Código ou descrição"></div>
-        </div>
-        <div class="tabela"><table>
-          <thead><tr>
-            <th class="th">Código</th><th class="th">Descrição</th><th class="th col-larga">NCM</th>
-            <th class="th col-larga">Un.</th><th class="th direita">Quantidade</th>
-            <th class="th direita col-larga">Unitário</th><th class="th direita">Total</th><th class="th"></th>
-          </tr></thead>
-          <tbody id="listaItens"></tbody>
-        </table></div>
-        <button class="mais" id="maisItens" hidden></button>
-      </div>
-
+    <div class="resultado" id="resultado" hidden>
       <aside class="via">
         <div class="via-aba"><span>Dados do arquivo</span><span class="via-n">2ª via</span></div>
         <div class="via-corpo">
@@ -100,14 +81,35 @@
                 <option value="99">99 · Outras</option>
               </select></label>
           </form>
-          <div class="linhas" id="resumo"></div>
-          <div class="avisos-via" id="gerais"></div>
-          <div class="via-pe">
-            <button class="btn btn-ghost" id="btnGerar"><i class="fa-solid fa-rotate"></i>Gerar de novo</button>
-            <a class="btn btn-ghost" id="btnPend" hidden><i class="fa-solid fa-file-csv"></i>Pendências</a>
+          <div class="via-lado">
+            <div class="linhas" id="resumo"></div>
+            <div class="avisos-via" id="gerais"></div>
+            <div class="via-pe">
+              <button class="btn btn-ghost" id="btnGerar"><i class="fa-solid fa-rotate"></i>Gerar de novo</button>
+              <a class="btn btn-ghost" id="btnPend" hidden><i class="fa-solid fa-file-csv"></i>Pendências</a>
+            </div>
           </div>
         </div>
       </aside>
+
+      <div class="card">
+        <div class="painel-tit">
+          <div class="segs segs-p" id="segs">
+            <button class="seg on" data-f="todos">Todos <b id="nTodos">0</b></button>
+            <button class="seg" data-f="pend">Com pendência <b id="nPend">0</b></button>
+          </div>
+          <div class="busca" style="flex:1;max-width:340px"><i class="fa-solid fa-magnifying-glass"></i><input class="input" id="busca" placeholder="Código ou descrição"></div>
+        </div>
+        <div class="tabela"><table>
+          <thead><tr>
+            <th class="th">Código</th><th class="th">Descrição</th><th class="th col-larga">NCM</th>
+            <th class="th col-larga">Un.</th><th class="th direita">Quantidade</th>
+            <th class="th direita col-larga">Unitário</th><th class="th direita">Total</th><th class="th"></th>
+          </tr></thead>
+          <tbody id="listaItens"></tbody>
+        </table></div>
+        <button class="mais" id="maisItens" hidden></button>
+      </div>
     </div>
   </section>
 

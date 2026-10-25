@@ -255,7 +255,6 @@
 
 /* ---------------- Telas do Estoque SPED ---------------- */
 .cab-via { display: flex; justify-content: space-between; align-items: baseline; gap: 10px; }
-.grade { display: grid; grid-template-columns: minmax(0, 1fr) 400px; gap: 22px; align-items: start; }
 .solta { border: 2px dashed var(--filete-forte); background: var(--talao); padding: 40px 24px; text-align: center; color: var(--tinta-2); cursor: pointer; }
 .solta i { display: block; font-size: 34px; color: var(--azul); margin-bottom: 12px; }
 .solta b { display: block; font: 700 22px/1.1 var(--cond); letter-spacing: .06em; text-transform: uppercase; color: var(--tinta); margin-bottom: 6px; }
@@ -289,7 +288,6 @@
 .form-esc { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 16px 18px; padding: 22px 24px 24px; }
 .form-esc .d2 { grid-column: span 2; }
 .form-esc .pe { grid-column: 1 / -1; display: flex; justify-content: flex-end; padding-top: 16px; border-top: 1.5px solid var(--azul); }
-@media (max-width: 1180px) { .grade { grid-template-columns: 1fr; } }
 @media (max-width: 640px) { .form-esc { grid-template-columns: 1fr; } .form-esc .d2 { grid-column: auto; } }
 .painel-tit .input { font: 16px var(--texto); text-transform: none; letter-spacing: 0; color: var(--tinta); height: 40px; }
 .painel-tit { flex-wrap: wrap; }
@@ -299,13 +297,7 @@
 .solta.compacta i { display: inline; font-size: 20px; margin: 0; }
 .solta.compacta b { display: inline; font-size: 17px; margin: 0; }
 .solta.compacta span { display: none; }
-/* Painel ao lado da lista: preso no topo e com altura da janela, rolando por dentro */
-@media (min-width: 1181px) {
-  .grade > .via { position: sticky; top: 16px; max-height: calc(100vh - 32px); overflow-y: auto; overscroll-behavior: contain; scrollbar-width: thin; }
-  .grade > .via .via-aba { position: sticky; top: 0; z-index: 2; }
-}
 .form-via .input.falta { border-color: var(--recus); background: #fff7f7; }
-.grade > * { min-width: 0; }
 @media (max-width: 640px) {
   .painel-tit .busca { max-width: none !important; flex-basis: 100%; }
   .filtros .btn { flex: 1 1 auto; }
@@ -359,3 +351,39 @@ tbody tr:nth-child(even) .td { background: #f6f9fd; }
 /* App, não site: a página nunca anda para o lado (arrasto de dois dedos no touchpad).
    clip não cria área de rolagem, então o painel preso no topo continua funcionando. */
 html, body { overflow-x: clip; overscroll-behavior-x: none; }
+
+/* ---------------- Formulário refinado: Dados do arquivo embaixo dos arquivos ---------------- */
+.resultado > * { min-width: 0; }
+.resultado > .via { margin-bottom: 22px; }
+.via-corpo { display: grid; grid-template-columns: minmax(0, 1fr) 320px; gap: 8px 28px; align-items: start; }
+.via-corpo > .form-via { margin: 0; grid-template-columns: repeat(5, minmax(0, 1fr)); }
+.via-corpo > .form-via .larga { grid-column: span 2; }
+.via-lado .via-pe { margin-top: 12px; }
+
+/* menos caixa alta e negrito: letra de sistema, 15 px no mínimo */
+.marca b { font: 700 20px/1 var(--texto); letter-spacing: .02em; }
+.selo { font: 600 15px/1 var(--texto); letter-spacing: .02em; text-transform: none; padding: 5px 9px; }
+.navbtn { font: 600 15px/1 var(--texto); letter-spacing: 0; text-transform: none; }
+.titulo { font: 600 24px/1.2 var(--texto); letter-spacing: 0; text-transform: none; color: var(--azul-esc); }
+.btn { font: 600 15px/1 var(--texto); letter-spacing: 0; text-transform: none; height: 38px; border-radius: 3px; }
+.solta b { font: 600 16px/1.2 var(--texto); letter-spacing: 0; text-transform: none; }
+.th { background: #eef3fb; color: var(--azul-esc); font: 600 15px/1.2 var(--texto); letter-spacing: 0; text-transform: none; border-right: 1px solid var(--filete); border-bottom: 2px solid var(--azul); }
+.td { padding: 10px 12px; }
+.carbono { font-weight: 400; }
+.canhoto .carbono { font-weight: 700; }
+.carimbo { font: 600 15px/1 var(--texto); letter-spacing: 0; text-transform: none; border-width: 1px; }
+.tag { font: 500 15px/1 var(--texto); letter-spacing: 0; text-transform: none; }
+.seg { font: 600 15px/1 var(--texto); letter-spacing: 0; text-transform: none; }
+.painel-tit { background: #fff; }
+.via-aba { font: 600 16px/1 var(--texto); letter-spacing: .02em; text-transform: none; }
+.form-via .rot, .label { font: 600 15px/1.2 var(--texto); letter-spacing: 0; text-transform: none; }
+.menu-item { font-weight: 500; }
+
+@media (max-width: 1180px) {
+  .via-corpo { grid-template-columns: 1fr; }
+  .via-corpo > .form-via { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+}
+@media (max-width: 640px) {
+  .via-corpo > .form-via { grid-template-columns: 1fr; }
+  .via-corpo > .form-via .larga { grid-column: auto; }
+}
