@@ -91,6 +91,7 @@ async function converter(msg = "Gerando o SPED…") {
       $("#nPend").textContent = "0";
       $("#resumo").innerHTML = "";
       $("#gerais").innerHTML = "";
+      $("#kpis").innerHTML = "";
       desenharItens();
       const campo = r.campo && $("#formEmp").elements[r.campo];
       if (campo) {
@@ -206,6 +207,12 @@ function desenharResultado() {
   $("#segFora").hidden = !r.fora.length;
   if (estado.filtro === "fora" && !r.fora.length) mudarFiltro("todos");
 
+  const nP = r.itens.filter((i) => i.p.length).length;
+  const kpi = (ic, rot, val, cls = "") => `<div class="kpi ${cls}"><i class="fa-solid ${ic}"></i><div><span>${esc(rot)}</span><b class="carbono">${esc(val)}</b></div></div>`;
+  $("#kpis").innerHTML = kpi("fa-boxes-stacked", "Itens no SPED", milhar(r.itens.length))
+    + kpi("fa-sack-dollar", "Valor do estoque", "R$ " + milhar(r.resumo.total))
+    + kpi(nP ? "fa-triangle-exclamation" : "fa-circle-check", "Com pendência", milhar(nP), nP ? "k-pend" : "k-ok")
+    + kpi("fa-ban", "Fora do arquivo", milhar(r.fora.length), r.fora.length ? "k-erro" : "");
   const linhas = [["Total do inventário", milhar(r.resumo.total)]];
   if (r.resumo.origem && r.resumo.origem !== r.resumo.total) linhas.push(["Total no arquivo do cliente", milhar(r.resumo.origem)]);
   linhas.push(["Período", r.resumo.periodo], ["Leiaute", r.resumo.leiaute], ["Linhas do arquivo", milhar(r.resumo.linhas)]);
