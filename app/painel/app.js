@@ -289,7 +289,7 @@ document.addEventListener("drop", (e) => {
 });
 
 /* ---------------- corrigir item ---------------- */
-const CAMPOS_ITEM = ["descricao", "ncm", "unidade", "tipo", "qtd", "vl_unit"];
+const CAMPOS_ITEM = ["codigo", "descricao", "ncm", "unidade", "tipo", "qtd", "vl_unit"];
 let itemAberto = null;
 $("#formItem").elements.tipo.innerHTML = $("#formEmp").elements.tipo_item.innerHTML;
 
@@ -299,7 +299,7 @@ function abrirItem(chave) {
   if (!i) return;
   const f = $("#formItem");
   // O que aparece no formulário é o valor atual; só o que mudar vira correção
-  const atuais = { descricao: i.d === "(sem descrição no arquivo)" ? "" : i.d, ncm: i.n, unidade: i.u,
+  const atuais = { codigo: i.c, descricao: i.d === "(sem descrição no arquivo)" ? "" : i.d, ncm: i.n, unidade: i.u,
     tipo: i.t || r.campos.tipo_item || "00", qtd: milhar(i.q), vl_unit: milhar(i.vu) };
   itemAberto = { chave, atuais };
   CAMPOS_ITEM.forEach((k) => (f.elements[k].value = atuais[k] ?? ""));
@@ -310,7 +310,7 @@ function abrirItem(chave) {
   // O cursor vai para o campo da primeira pendência
   const pend = i.p.join(" ");
   const campo = [[/NCM/, "ncm"], [/sem quantidade|fracionada|quantidade zero/, "qtd"], [/sem valor|unitário|negativo/, "vl_unit"],
-    [/unidade/, "unidade"], [/tipo do item/, "tipo"]].find(([re]) => re.test(pend));
+    [/unidade/, "unidade"], [/tipo do item/, "tipo"], [/código/, "codigo"]].find(([re]) => re.test(pend));
   f.elements[campo ? campo[1] : "descricao"].focus();
 }
 

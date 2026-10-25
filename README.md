@@ -125,9 +125,9 @@ Avisos que valem para o arquivo todo (NCM faltando no comércio, quantidades arr
 
 ## Corrigir um item no painel
 
-Clique no item (na lista "Todos", "Com pendência" ou "Fora do arquivo") para corrigir descrição, NCM, unidade, tipo, quantidade ou valor unitário. "Salvar e gerar de novo" refaz o SPED com a correção, e as conferências do app rodam de novo sobre o valor corrigido: corrigida a quantidade fracionada, a pendência some; com a quantidade preenchida, o item que estava fora entra no arquivo. O item corrigido aparece como **Corrigido**, e "Desfazer correção" volta o que veio do arquivo.
+Clique no item (na lista "Todos", "Com pendência" ou "Fora do arquivo") para corrigir código, descrição, NCM, unidade, tipo, quantidade ou valor unitário. "Salvar e gerar de novo" refaz o SPED com a correção, e as conferências do app rodam de novo sobre o valor corrigido: corrigida a quantidade fracionada, a pendência some; com a quantidade preenchida, o item que estava fora entra no arquivo. O item corrigido aparece como **Corrigido**, e "Desfazer correção" volta o que veio do arquivo.
 
-Descrição, NCM, unidade e tipo ficam guardados por CNPJ (`ajustes.json`, na pasta de dados) e valem também nos próximos inventários da empresa, para o mesmo item do mesmo arquivo. Quantidade e valor valem só para o inventário aberto. O arquivo do cliente nunca é alterado.
+Código, descrição, NCM, unidade e tipo ficam guardados por CNPJ (`ajustes.json`, na pasta de dados) e valem também nos próximos inventários da empresa, para o mesmo item do mesmo arquivo. Quantidade e valor valem só para o inventário aberto. O arquivo do cliente nunca é alterado.
 
 ## Vários arquivos juntos
 

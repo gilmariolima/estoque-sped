@@ -984,7 +984,7 @@ def total_confere(qtd, vl_unit, vl_item):
 
 # Campos que o painel deixa corrigir. Os de cadastro valem também nos próximos inventários
 # da empresa; quantidade e valor são só deste inventário.
-AJUSTES_CADASTRO = ("descricao", "ncm", "unidade", "tipo")
+AJUSTES_CADASTRO = ("codigo", "descricao", "ncm", "unidade", "tipo")
 AJUSTES = (*AJUSTES_CADASTRO, "qtd", "vl_unit")
 
 
@@ -1013,6 +1013,11 @@ def aplicar_ajustes(itens, ajustes):
                 # Quantidade ou unitário corrigido: o total passa a ser quantidade × unitário
                 if it.vl_unit is not None:
                     it.vl_item = None
+            elif campo == "codigo":
+                # O código do arquivo continua valendo para achar o item nos arquivos de complemento
+                if it.codigo:
+                    it.aliases.add(it.codigo)
+                it.codigo = valor
             elif campo == "tipo":
                 it.tipo = valor.zfill(2) if valor.isdigit() else valor
             elif campo == "unidade":
