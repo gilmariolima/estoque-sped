@@ -10,17 +10,18 @@
 <link rel="manifest" href="/web/app.webmanifest?v=__ICONE__">
 <link rel="stylesheet" href="/web/vendor/fa/css/fontawesome.min.css">
 <link rel="stylesheet" href="/web/vendor/fa/css/solid.min.css">
-<link rel="stylesheet" href="/web/estilo.css?v=10">
+<link rel="stylesheet" href="/web/estilo.css?v=11">
 </head>
 <body>
 <div class="estrutura">
 <aside class="menu-lateral">
-  <div class="marca">Estoque<small>SPED Fiscal · Bloco H</small></div>
+  <div class="marca"><img src="/web/icone.svg" alt=""><div>Estoque SPED<small>EFD ICMS/IPI · Bloco H</small></div></div>
   <nav>
-    <button class="navbtn ativo" data-aba="converter">Converter</button>
-    <button class="navbtn" data-aba="gerados">Arquivos gerados <span class="cont" id="contGerados" hidden></span></button>
-    <button class="navbtn" data-aba="escritorio">Escritório</button>
+    <button class="navbtn ativo" data-aba="converter"><i class="fa-solid fa-file-import"></i><span>Converter</span></button>
+    <button class="navbtn" data-aba="gerados"><i class="fa-solid fa-folder-open"></i><span>Arquivos gerados</span> <span class="cont" id="contGerados" hidden></span></button>
+    <button class="navbtn" data-aba="escritorio"><i class="fa-solid fa-building"></i><span>Escritório</span></button>
   </nav>
+  <div class="versao">__VERSAO__</div>
 </aside>
 
 <main class="pagina">
@@ -60,24 +61,32 @@
     <div class="erro-caixa" id="erroConv" hidden></div>
 
     <div class="resultado" id="resultado" hidden>
+      <div class="kpis" id="kpis"></div>
       <div class="duas">
-        <section>
-          <h2>Dados da empresa</h2>
+        <section class="card">
+          <div class="card-tit"><h2>Dados da empresa</h2><span class="sub">Registros 0000, 0005 e 0150</span></div>
           <form class="form-via" id="formEmp" autocomplete="off">
+            <fieldset class="grupo"><legend>Identificação</legend>
             <label class="larga"><span class="rot">Nome empresarial</span><input class="input" name="nome"></label>
             <label><span class="rot">CNPJ</span><input class="input" name="cnpj" autocapitalize="characters" spellcheck="false"></label>
             <label><span class="rot">Inscrição estadual</span><input class="input" name="ie"></label>
             <label><span class="rot">UF</span><input class="input" name="uf" maxlength="2"></label>
             <label><span class="rot" title="Código IBGE do município, 7 dígitos">Município (IBGE)</span><input class="input" name="cod_mun" inputmode="numeric" maxlength="7"></label>
+            </fieldset>
+            <fieldset class="grupo"><legend>Escrituração</legend>
             <label><span class="rot">Data do inventário</span><input class="input" name="data_inv" placeholder="31/12/2025"></label>
             <label><span class="rot" title="Mês da EFD. Pelo Guia Prático, o inventário vai na EFD do segundo mês depois dele: o de 31/12 vai na de fevereiro.">Período (mês)</span><input class="input" name="periodo" placeholder="automático"></label>
+            <label><span class="rot">Perfil</span><select class="input" name="perfil"><option>A</option><option>B</option><option>C</option></select></label>
+            <label><span class="rot">Atividade</span><select class="input" name="ind_ativ"><option value="1">Outros</option><option value="0">Industrial</option></select></label>
+            </fieldset>
+            <fieldset class="grupo"><legend>Endereço do estabelecimento</legend>
             <label><span class="rot" title="CEP do estabelecimento (registro 0005)">CEP</span><input class="input" name="cep" inputmode="numeric" maxlength="9"></label>
             <label class="larga"><span class="rot" title="Logradouro do estabelecimento (registro 0005)">Endereço</span><input class="input" name="end"></label>
             <label><span class="rot">Número</span><input class="input" name="num" maxlength="10"></label>
             <label><span class="rot">Complemento</span><input class="input" name="compl"></label>
             <label><span class="rot">Bairro</span><input class="input" name="bairro"></label>
-            <label><span class="rot">Perfil</span><select class="input" name="perfil"><option>A</option><option>B</option><option>C</option></select></label>
-            <label><span class="rot">Atividade</span><select class="input" name="ind_ativ"><option value="1">Outros</option><option value="0">Industrial</option></select></label>
+            </fieldset>
+            <fieldset class="grupo"><legend>Itens</legend>
             <label class="larga"><span class="rot" title="Usado quando o arquivo não informa o tipo do item">Tipo do item (padrão)</span>
               <select class="input" name="tipo_item">
                 <option value="00">00 · Mercadoria para revenda</option><option value="01">01 · Matéria-prima</option>
@@ -87,11 +96,12 @@
                 <option value="08">08 · Ativo imobilizado</option><option value="10">10 · Outros insumos</option>
                 <option value="99">99 · Outras</option>
               </select></label>
+            </fieldset>
           </form>
         </section>
-        <aside>
-          <h2>Resumo</h2>
-          <div class="resumo-caixa">
+        <aside class="card resumo-caixa">
+          <div class="card-tit"><h2>Resumo</h2></div>
+          <div>
             <div class="linhas" id="resumo"></div>
             <div class="avisos-via" id="gerais"></div>
             <div class="via-pe">
@@ -102,8 +112,8 @@
         </aside>
       </div>
 
-      <h2>Itens</h2>
-      <div>
+      <div class="card card-itens">
+        <div class="card-tit"><h2>Itens</h2></div>
         <div class="painel-tit">
           <div class="segs segs-p" id="segs">
             <button class="seg on" data-f="todos">Todos <b id="nTodos">0</b></button>
@@ -185,6 +195,6 @@
 <div class="processando" id="processando" hidden><div><span class="spin"></span><span id="procTxt">Lendo arquivos…</span></div></div>
 <div class="toast-area" id="avisos"></div>
 
-<script src="/web/app.js?v=7"></script>
+<script src="/web/app.js?v=8"></script>
 </body>
 </html>

@@ -177,6 +177,7 @@ async function iniciar() {
       motor: dirMotor,
       dados: pasta,
       log: path.join(pasta, 'painel.log'),
+      versao: app.getVersion(),
     })
     // O motor caiu com o app aberto (não foi o app que mandou parar)
     motor.processo.once('exit', (codigo) => {

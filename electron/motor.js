@@ -38,15 +38,16 @@ function caminhoPython({ motor, plataforma = process.platform, env = process.env
  * O painel só atende quem tem o token desta execução (outro programa ou outro usuário do mesmo
  * computador não consegue usar a porta): vai pelo ambiente, que só o próprio usuário enxerga.
  * A janela abre `entrada` (/?t=<token>), e o painel guarda o token num cookie.
+ * `versao` (a do app) aparece no rodapé do menu do painel.
  * @returns {Promise<{ porta: number, url: string, entrada: string, token: string, processo: import('node:child_process').ChildProcess, parar: () => Promise<void> }>}
  */
-function iniciarMotor({ python, motor, dados, log, espera = 30e3 }) {
+function iniciarMotor({ python, motor, dados, log, versao = '', espera = 30e3 }) {
   fs.mkdirSync(dados, { recursive: true })
   const token = crypto.randomBytes(32).toString('base64url')
   const saidaLog = log ? fs.createWriteStream(log, { flags: 'a' }) : null
   const processo = spawn(python, [path.join(motor, 'painel.py'), '--porta', '0', '--sem-navegador'], {
     cwd: motor,
-    env: { ...process.env, ESTOQUE_DADOS: dados, ESTOQUE_TOKEN: token, PYTHONUNBUFFERED: '1', PYTHONIOENCODING: 'utf-8' },
+    env: { ...process.env, ESTOQUE_DADOS: dados, ESTOQUE_TOKEN: token, ESTOQUE_VERSAO: versao, PYTHONUNBUFFERED: '1', PYTHONIOENCODING: 'utf-8' },
     windowsHide: true,
     stdio: ['ignore', 'pipe', 'pipe'],
   })
