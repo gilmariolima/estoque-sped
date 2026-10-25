@@ -158,7 +158,10 @@ def converter(dados):
             "q": gs.fmt(it.qtd, 3), "vu": gs.fmt(it.vl_unit, 6), "vt": gs.fmt(vl_item, 2),
             "t": it.tipo or args.tipo_item, "p": list(it.pendencias),
         })
-    fora = [{"c": it.codigo, "p": list(it.pendencias)} for it in res.fora]
+    # Itens que ficaram fora: com os números que vieram no arquivo e o motivo, para a tela mostrar
+    numero = lambda v, casas: gs.fmt(v, casas) if v is not None else ""
+    fora = [{"c": it.codigo, "d": it.descricao, "n": it.ncm, "u": it.unidade, "q": numero(it.qtd, 3),
+             "vu": numero(it.vl_unit, 6), "vt": numero(it.vl_item, 2), "p": list(it.pendencias)} for it in res.fora]
     emp = res.emp
     return {
         "arquivos": arquivos,

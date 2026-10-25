@@ -611,6 +611,54 @@ class Pendencias(Base):
         self.assertTrue(any(c == "A1-2" and "arredondada" in m for _, c, m in res.pendencias))
 
 
+class Conferencias(Base):
+    """O que o arquivo não traz e o app teve de supor vira aviso."""
+
+    def test_quantidade_fracionada_em_unidade_inteira(self):
+        p = arquivo("frac.csv", "Codigo;Descricao;Unidade;Qtd;Valor Unit\nA1;CANETA;UN;755,339;1,00\nA2;TECIDO;M;2,5;1,00\n"
+                                "A3;LAPIS;PC;3;1,00\n")
+        res = self.gerar(p)
+        avisos = [(c, m) for t, c, m in res.pendencias if "fracionada" in m]
+        self.assertEqual([c for c, _ in avisos], ["A1"])
+        self.assertIn("755,339", avisos[0][1])
+
+    def test_ncm_vazio_no_comercio_vira_um_aviso_so(self):
+        p = arquivo("semncm.csv", "Codigo;Descricao;Qtd;Valor Unit;NCM\nA1;X;1;1,00;\nA2;Y;1;1,00;\nA3;Z;1;1,00;96081000\n")
+        res = self.gerar(p)
+        self.assertEqual(len(self.pend(res, "2 de 3 itens sem NCM", "arquivo")), 1)
+        self.assertFalse(self.pend(res, "sem NCM:", "item"))
+
+    def test_ncm_vazio_na_industria_avisa_cada_item(self):
+        p = arquivo("semncm_ind.csv", "Codigo;Descricao;Qtd;Valor Unit;NCM\nA1;X;1;1,00;\nA3;Z;1;1,00;96081000\n")
+        res = self.gerar(p, ind_ativ="0")
+        self.assertEqual([c for t, c, m in res.pendencias if t == "item" and "sem NCM" in m], ["A1"])
+        self.assertTrue(self.pend(res, "matéria-prima é 01", "arquivo"))
+
+    def test_tipo_padrao_avisado(self):
+        p = arquivo("semtipo.csv", "Codigo;Descricao;Qtd;Valor Unit;Tipo\nA1;X;1;1,00;\nA2;Y;1;1,00;04\n")
+        res = self.gerar(p)
+        self.assertEqual(len(self.pend(res, "1 de 2 itens sem o tipo no arquivo: usado o tipo padrão 00", "arquivo")), 1)
+
+    def test_cnae_de_industria_marca_a_atividade(self):
+        self.assertTrue(gs.cnae_industrial("1412601"))  # confecção de roupas
+        self.assertTrue(gs.cnae_industrial("0500301"))
+        self.assertFalse(gs.cnae_industrial("4783102"))  # comércio de relógios
+        self.assertFalse(gs.cnae_industrial(""))
+        consulta = {"nome": "MALHARIA X", "uf": "CE", "cod_mun": "2307650", "cep": "61900000", "end": "RUA A", "num": "1",
+                    "compl": "", "bairro": "CENTRO", "fantasia": "", "fone": "", "email": "", "cnae": "1412601"}
+        p = arquivo("cnae.csv", "Codigo;Descricao;Qtd;Valor Unit\nA1;X;1;1,00\n")
+        f = gs.ler_arquivo(p)
+        with mock.patch.object(gs, "consultar_cnpj", return_value=consulta), \
+             mock.patch.object(gs, "CADASTRO_EMPRESAS", TMP / "empresas_cnae.json"):
+            res = gs.converter(f, [], gs.opcoes(data_inv="31/12/2025", cnpj="71503824000122"))
+            self.assertEqual(self.reg(res, "0000")[0][14], "0")
+            self.assertEqual(len(self.reg(res, "0002")), 1)
+            self.assertTrue(self.pend(res, "CNAE 1412601 é de indústria"))
+            # escolhido no formulário, vale o que a pessoa marcou
+            res = gs.converter(f, [], gs.opcoes(data_inv="31/12/2025", cnpj="71503824000122", ind_ativ="1"))
+            self.assertEqual(self.reg(res, "0000")[0][14], "1")
+
+
 class ArquivosDeExemplo(Base):
     """Todo arquivo de exemplo da pasta arquivos/ gera um SPED que passa na conferência."""
 
