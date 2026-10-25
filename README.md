@@ -29,10 +29,10 @@ O Estoque SPED é um programa de verdade (feito em Electron, como o VS Code), co
 **Publicar uma versão nova** (o GitHub gera o instalador sozinho):
 
 1. Aumente o `version` do `package.json` (ex.: `npm version 1.3.0 --no-git-tag-version`) e junte na `main`.
-2. Em **Releases → Draft a new release**, crie a tag `v<versão>` (ex.: `v1.3.0`) na `main` e publique. Ou, pelo terminal: `git tag v1.3.0` e `git push origin v1.3.0`.
-3. O workflow **Publicar versão** (`.github/workflows/publicar.yml`) roda os testes, gera o instalador num Windows e anexa à versão o `Estoque-SPED-Setup-<versão>.exe` e o `latest.yml`. Acompanhe na aba **Actions**; leva uns 10 minutos.
+2. Em **Actions → Publicar versão → Run workflow** (com `main` escolhida), clique em **Run workflow**. O GitHub cria a tag `v<versão>` com o número do `package.json`.
+3. O workflow **Publicar versão** (`.github/workflows/publicar.yml`) roda os testes, gera o instalador num Windows e publica a versão com o `Estoque-SPED-Setup-<versão>.exe` e o `latest.yml`. Leva uns 3 minutos.
 
-A tag tem de bater com o `version` do `package.json`: se não bater, o workflow para e diz o que fazer. Os testes também rodam sozinhos (workflow **Testes**) em todo pull request e a cada mudança na `main`.
+Também dá para criar a versão à mão em **Releases → Draft a new release**, com a tag `v<versão>` na `main`: o workflow roda do mesmo jeito. Se a tag não bater com o `version` do `package.json`, ou se a versão já existir, o workflow para e diz o que fazer. Os testes também rodam sozinhos (workflow **Testes**) em todo pull request e a cada mudança na `main`.
 
 **Gerar o instalador no próprio computador** (para testar antes de publicar; num Windows 64 bits com Node 22+ e internet):
 
