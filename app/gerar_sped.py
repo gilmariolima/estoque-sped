@@ -24,6 +24,7 @@ import os
 import re
 import sys
 import unicodedata
+import urllib.error
 import urllib.request
 from dataclasses import dataclass, field
 from datetime import date
@@ -104,6 +105,7 @@ class Fonte:
     nao_lidas: list = field(default_factory=list)  # linhas com cara de item que o leitor não entendeu
     avisos: list = field(default_factory=list)  # o que o leitor deixou de lado ou supôs sobre o arquivo
     participantes: dict = field(default_factory=dict)  # COD_PART -> dados do 0150
+    cadastro: list = field(default_factory=list)  # produtos cadastrados que não estão no inventário do arquivo
 
     @property
     def tem_valores(self):
@@ -371,6 +373,8 @@ def separar_codigo(txt):
 def ler_relatorio_inventario(caminho, conteudo):
     itens, empresa, data_inv, total, nao_lidas = [], {}, None, None, []
     com_espaco = []  # códigos de mais de um termo separados com segurança: um aviso só, no arquivo
+    tamanhos = []  # tamanho do campo código + descrição de cada item (o sistema corta num limite)
+    duvidosos = collections.defaultdict(set)  # código separado por suposição -> descrições em que aparece
     for linha in conteudo.splitlines():
         m = RE_LINHA_INV.match(linha)
         if m and RE_TOTAL_REL.fullmatch(sem_acento(m["texto"]).strip()):
@@ -384,8 +388,10 @@ def ler_relatorio_inventario(caminho, conteudo):
                 qtd=num(m["qtd"], br=True), vl_unit=num(m["unit"], br=True), vl_item=num(m["total"], br=True),
                 origem=texto(m["texto"]),
             )
+            tamanhos.append((len(m["texto"].strip()), texto(m["texto"])))
             if duvidoso:  # o código pode ter levado parte da descrição: o contador confere este
                 it.pendencias.append(f"código \"{codigo}\" separado da descrição pelo app (linha \"{texto(m['texto'])}\"): confira")
+                duvidosos[codigo].add(texto(descr))
             elif " " in codigo:
                 com_espaco.append(codigo)
             itens.append(it)
@@ -406,6 +412,19 @@ def ler_relatorio_inventario(caminho, conteudo):
     if com_espaco:
         avisos.append(f"{len(com_espaco)} código(s) com espaço separados da descrição pelos termos com número ou barra "
                       f"(ex.: {', '.join(com_espaco[:3])}): confira a coluna Código na lista de itens")
+    # O sistema corta código + descrição num tamanho fixo: muitas linhas exatamente no maior
+    # tamanho são descrições cortadas ("GAIVOTA COURO TRABALHA")
+    if tamanhos:
+        limite = max(t for t, _ in tamanhos)
+        cortadas = [txt for t, txt in tamanhos if t == limite]
+        # 3 ou mais e pelo menos 5% dos itens: com poucos, o mesmo tamanho pode ser coincidência
+        if limite <= 60 and len(cortadas) >= 3 and len(cortadas) >= len(tamanhos) * 0.05:
+            avisos.append(f"{len(cortadas)} item(ns) com código e descrição no limite de {limite} caracteres do relatório: "
+                          f"a descrição pode ter sido cortada (ex.: \"{cortadas[0]}\"). Junte um cadastro com a descrição completa")
+    for codigo, descricoes in duvidosos.items():
+        if len(descricoes) > 1:
+            avisos.append(f"\"{codigo}\" aparece com {len(descricoes)} descrições diferentes: talvez não seja código, e sim parte "
+                          f"do nome do produto; os itens foram separados como {codigo}-2, {codigo}-3...")
     return Fonte(caminho, "Relatório de inventário", itens, empresa, data_inv, total, nao_lidas=nao_lidas, avisos=avisos)
 
 
@@ -444,12 +463,15 @@ def ler_fortes_fs(caminho, conteudo):
             item.tipo = grupos.get(p[9].lstrip("0"), "")
         data_inv = data_inv or data_ddmmaaaa(c[2])
         itens.append(item)
-    if not itens:  # só cadastro: serve para completar
-        for p in produtos.values():
-            cod = texto(p[3]) if p[3].strip() else p[1]
-            itens.append(Item(codigo=cod, descricao=texto(p[2]), ncm=so_digitos(p[4]), unidade=p[5],
-                              tipo=grupos.get(p[9].lstrip("0"), ""), aliases={p[1]}))
-    return Fonte(caminho, "Fortes (.FS)", itens, empresa, data_inv, unidades=unidades)
+    # Produtos cadastrados (PRO) sem inventário (IIV): sem IIV nenhum, o arquivo é só cadastro;
+    # com IIV, os outros produtos ainda completam descrição e NCM de outro inventário
+    com_iiv = {a for i in itens for a in i.aliases}
+    cadastro = [Item(codigo=bruto(p[3]) if p[3].strip() else p[1], descricao=bruto(p[2]), ncm=so_digitos(p[4]),
+                     unidade=p[5], tipo=grupos.get(p[9].lstrip("0"), ""), aliases={p[1]})
+                for p in produtos.values() if p[1] not in com_iiv]
+    if not itens:
+        itens, cadastro = cadastro, []
+    return Fonte(caminho, "Fortes (.FS)", itens, empresa, data_inv, unidades=unidades, cadastro=cadastro)
 
 
 def campos_sped(linha, tam):
@@ -510,11 +532,13 @@ def ler_sped(caminho, conteudo):
         c = cadastro.get(it.codigo)
         if c:
             it.descricao, it.cod_barra, it.tipo, it.ncm, it.cest = c[2], c[3], c[6], c[7], c[12]
+    no_h010 = {it.codigo for it in itens}
+    so_cadastro = [Item(codigo=c[1], descricao=c[2], unidade=c[5], tipo=c[6], ncm=c[7], cest=c[12], cod_barra=c[3])
+                   for c in cadastro.values() if c[1] not in no_h010]
     if not itens:
-        for c in cadastro.values():
-            itens.append(Item(codigo=c[1], descricao=c[2], unidade=c[5], tipo=c[6], ncm=c[7], cest=c[12], cod_barra=c[3]))
+        itens, so_cadastro = so_cadastro, []
     return Fonte(caminho, "SPED / bloco H", itens, empresa, data_inv, total, unidades, nao_lidas,
-                 avisos=avisos, participantes=participantes)
+                 avisos=avisos, participantes=participantes, cadastro=so_cadastro)
 
 
 # Cabeçalhos de planilha reconhecidos (sem acento, maiúsculo, por "contém")
@@ -616,10 +640,13 @@ RE_TOTAL = re.compile(r"(SUB-?\s*)?TOTA(L|IS)\b|SOMA\b|TRANSPORT|A TRANSPORTAR")
 
 
 def cabecalho(linhas):
-    """Linha do cabeçalho: a primeira, entre as 30 de cima, com um código e mais 2 campos conhecidos."""
+    """Linha do cabeçalho: a primeira, entre as 30 de cima, com um código e mais 2 campos conhecidos
+    (ou código e descrição)."""
     for i, l in enumerate(linhas[:30]):
         m = mapear_colunas(l)
-        if len(m) >= 3 and ("codigo" in m or "codigo_alt" in m):
+        tem_codigo = "codigo" in m or "codigo_alt" in m
+        # 3 campos conhecidos, ou só código e descrição (planilha de cadastro para completar o relatório)
+        if tem_codigo and (len(m) >= 3 or "descricao" in m):
             return i, m
     return None, None
 
@@ -792,6 +819,26 @@ def consultar_cnpj(cnpj):
     }
 
 
+def erro_consulta(cnpj, e):
+    """Motivo da consulta do CNPJ que falhou, em português."""
+    if isinstance(e, urllib.error.HTTPError) and e.code == 404:
+        return f"CNPJ {cnpj} não encontrado na Receita: confira o número"
+    if isinstance(e, urllib.error.URLError):
+        return "sem acesso à internet para consultar o CNPJ"
+    return f"consulta do CNPJ falhou ({e})"
+
+
+# Palavras que não identificam a empresa: ficam fora da comparação do nome do arquivo com o da Receita
+PALAVRAS_COMUNS = {"LTDA", "EIRELI", "EPP", "MATRIZ", "FILIAL", "COMERCIO", "COMERCIAL", "IND", "INDUSTRIA", "INDUSTRIAL",
+                   "DAS", "DOS", "CIA", "SERVICOS", "LOJA", "EMPRESA", "BRASIL"}
+
+
+def nomes_parecidos(a, b):
+    """True se os dois nomes têm alguma palavra em comum (fora as genéricas, como LTDA e FILIAL)."""
+    palavras = lambda t: {w for w in re.findall(r"[A-Z0-9]+", sem_acento(t)) if len(w) >= 3 and w not in PALAVRAS_COMUNS}
+    return bool(palavras(a) & palavras(b))
+
+
 def cnae_industrial(cnae):
     """CNAE da indústria de transformação ou extrativa (divisões 05 a 33)."""
     d = so_digitos(cnae).zfill(7) if so_digitos(cnae) else ""
@@ -842,7 +889,12 @@ def dados_empresa(fontes, args, pendencias):
             cadastro[cnpj] = salvo
             salvar_cadastro(cadastro)
         except Exception as e:
-            pendencias.append(("empresa", cnpj, f"consulta do CNPJ falhou ({e}): preencha UF, município e endereço"))
+            pendencias.append(("empresa", cnpj, f"{erro_consulta(cnpj, e)}: preencha UF, município e endereço"))
+    # Nome do arquivo bem diferente do nome na Receita: o CNPJ pode estar errado (é de outra empresa)
+    nome_arq, nome_rec = do_arquivo.get("nome") or da_linha.get("nome"), salvo.get("nome")
+    if nome_arq and nome_rec and not (nomes_parecidos(nome_arq, nome_rec) or nomes_parecidos(nome_arq, salvo.get("fantasia", ""))):
+        pendencias.append(("empresa", cnpj, f"o nome no arquivo (\"{texto(nome_arq)}\") não bate com o do CNPJ {cnpj} na Receita "
+                           f"(\"{texto(nome_rec)}\"): confira se o CNPJ está certo; o arquivo saiu com o nome da Receita"))
     for k, v in salvo.items():
         if v and (not emp.get(k) or (k == "nome" and "nome" not in da_linha)):
             emp[k] = v
@@ -889,7 +941,7 @@ def participantes_usados(itens, fontes, args, pendencias):
                 cadastro[cod] = salvo
                 salvar_cadastro(cadastro)
             except Exception as e:
-                pendencias.append(("participante", cod, f"consulta do CNPJ do participante falhou ({e})"))
+                pendencias.append(("participante", cod, f"participante: {erro_consulta(cod, e)}"))
         if salvo.get("nome"):
             dados[cod] = {"nome": salvo["nome"], "cod_pais": "1058", "cnpj": cod, "cpf": "", "ie": salvo.get("ie", ""),
                           "cod_mun": salvo.get("cod_mun", ""), "suframa": "", "end": salvo.get("end", ""),
@@ -909,17 +961,33 @@ def ncm_valido(ncm):
     return d if len(d) == 8 and d != "00000000" else None
 
 
-def complementar(principal, extras, pendencias, codigos_gerados, participantes=None):
+def total_confere(qtd, vl_unit, vl_item):
+    """Total igual a quantidade × unitário, com diferença de centavo. Unitário com 2 ou mais
+    casas pode ter sido arredondado na impressão (2,47 para 2,4666...): aí vale meia casa de
+    diferença. Unitário inteiro ou com 1 casa é o valor digitado, sem arredondamento."""
+    if abs(qtd * vl_unit - vl_item) <= DOIS or not qtd:
+        return True
+    casas = -vl_unit.normalize().as_tuple().exponent if vl_unit else 0
+    if casas < 2:
+        return False
+    return abs(vl_item / qtd - vl_unit) <= Decimal(5).scaleb(-casas - 1)
+
+
+def complementar(principal, extras, pendencias, codigos_gerados, participantes=None, so_cadastro=()):
     """Itens que entram no arquivo (e os que ficaram fora). As pendências de cada item ficam
-    nele (it.pendencias) e vão para a lista geral no fim, já com o código final do item."""
+    nele (it.pendencias) e vão para a lista geral no fim, já com o código final do item.
+    `so_cadastro`: arquivos de outra data ou de outro estabelecimento, que só completam
+    descrição, NCM, unidade e tipo (quantidade e valor deles são de outro inventário)."""
     participantes = participantes or {}
+    so_cadastro = set(so_cadastro)
     indice, arquivo_de = {}, {}
     for f in extras:
-        for it in f.itens:
-            arquivo_de[id(it)] = f.caminho.name
+        for it in [*f.itens, *f.cadastro]:
+            arquivo_de[id(it)] = f
             for c in {it.codigo, *it.aliases}:
                 if c:
                     indice.setdefault(c.upper(), it)
+    arredondadas, total_errado = [], []
 
     finais, fora, usados = [], [], set()
     por_codigo, cadastro = {}, {}  # cadastro: código -> item que define o 0200
@@ -929,17 +997,22 @@ def complementar(principal, extras, pendencias, codigos_gerados, participantes=N
             (indice[a.upper()] for a in it.aliases if a and a.upper() in indice), None)
         if ref:
             usados.add(id(ref))
+            mesmo_inventario = arquivo_de[id(ref)].caminho not in so_cadastro
             # O complemento não muda a quantidade do inventário, mas a divergência é avisada:
             # é o que o contador quer conferir (ex.: inventário x estoque escriturado)
-            if it.qtd is not None and ref.qtd is not None and it.qtd != ref.qtd:
-                p(f"quantidade {fmt(it.qtd, 3)} difere da de {arquivo_de[id(ref)]} ({fmt(ref.qtd, 3)}): mantida a do inventário")
+            if mesmo_inventario and it.qtd is not None and ref.qtd is not None and it.qtd != ref.qtd:
+                p(f"quantidade {fmt(it.qtd, 3)} difere da de {arquivo_de[id(ref)].caminho.name} ({fmt(ref.qtd, 3)}): mantida a do inventário")
             for campo in ("descricao", "ncm", "unidade", "tipo", "cod_cta", "cest", "cod_barra"):
                 if not getattr(it, campo) and getattr(ref, campo):
                     setattr(it, campo, getattr(ref, campo))
+            # Descrição cortada no relatório ("GAIVOTA COURO TRABALHA"): vale a completa do cadastro
+            completa, cortada = texto(ref.descricao).upper(), texto(it.descricao).upper()
+            if cortada and len(completa) > len(cortada) and completa.startswith(cortada):
+                it.descricao = ref.descricao
             # NCM impresso como "00" ou faltando dígitos no inventário: vale o do cadastro
             if not ncm_valido(it.ncm) and ncm_valido(ref.ncm):
                 it.ncm = ref.ncm
-            if it.vl_unit is None and it.vl_item is None and ref.vl_unit is not None:
+            if mesmo_inventario and it.vl_unit is None and it.vl_item is None and ref.vl_unit is not None:
                 it.vl_unit = ref.vl_unit
                 p(f"valor unitário veio de {ref.origem or 'outro arquivo'}: {fmt(ref.vl_unit, 6)}")
 
@@ -988,8 +1061,15 @@ def complementar(principal, extras, pendencias, codigos_gerados, participantes=N
             fora.append(it)
             continue
         if it.qtd != it.qtd.quantize(TRES):
-            p(f"quantidade {str(it.qtd).replace('.', ',')} arredondada para {fmt(it.qtd, 3)} (o SPED aceita 3 casas); "
-              "valor do item mantido")
+            arredondadas.append(f"{it.codigo} {str(it.qtd).replace('.', ',')} -> {fmt(it.qtd, 3)}")
+        # Total que não é quantidade × unitário (fórmula errada na planilha, coluna trocada):
+        # vale quantidade × unitário, e o item vai para as pendências
+        if it.vl_item is not None and it.vl_unit is not None and not total_confere(it.qtd, it.vl_unit, it.vl_item):
+            calculado = (it.qtd * it.vl_unit).quantize(DOIS, ROUND_HALF_UP)
+            p(f"total do arquivo {fmt(it.vl_item, 2)} difere de quantidade × unitário ({fmt(it.qtd, 3)} × "
+              f"{str(it.vl_unit).replace('.', ',')} = {fmt(calculado, 2)}): usado {fmt(calculado, 2)}")
+            total_errado.append(it.codigo)
+            it.vl_item = calculado
         if it.vl_item is None:
             it.vl_item = (it.qtd * it.vl_unit).quantize(DOIS, ROUND_HALF_UP)
         if it.vl_unit is None:
@@ -1025,11 +1105,18 @@ def complementar(principal, extras, pendencias, codigos_gerados, participantes=N
         por_codigo[chave] = it
         finais.append(it)
 
+    # Nenhum item com descrição: o arquivo não tem cadastro (ex.: bloco H sem 0200). Um aviso só,
+    # para o filtro "Com pendência" continuar mostrando o que é de cada item
+    sem_descricao = [it for it in finais if not it.descricao]
+    if finais and len(sem_descricao) == len(finais):
+        pendencias.append(("arquivo", principal.caminho.name, f"nenhum dos {len(finais)} itens tem descrição no arquivo: usado "
+                           "\"ITEM <código>\". Junte o cadastro do cliente (SPED com 0200, .FS ou planilha com código e descrição)"))
     for it in finais:
         p = it.pendencias.append
         if not it.descricao:
             it.descricao = f"ITEM {it.codigo}"
-            p("sem descrição em nenhum arquivo: usado o próprio código")
+            if len(sem_descricao) < len(finais):
+                p("sem descrição em nenhum arquivo: usado o próprio código")
         if ncm_valido(it.ncm):
             it.ncm = ncm_valido(it.ncm)
         elif it.ncm:
@@ -1049,12 +1136,23 @@ def complementar(principal, extras, pendencias, codigos_gerados, participantes=N
     # Itens com quantidade nos arquivos de complemento que não estão no inventário: não entram,
     # mas o contador precisa saber (ex.: estoque escriturado com item que o inventário não tem)
     for f in extras:
+        if f.caminho in so_cadastro:
+            continue
         sobra = [i.codigo for i in f.itens if i.qtd and id(i) not in usados]
         if sobra:
             exemplos = ", ".join(sobra[:5]) + ("..." if len(sobra) > 5 else "")
             pendencias.append(("arquivo", f.caminho.name, f"{len(sobra)} item(ns) com quantidade neste arquivo não estão no "
                                f"inventário ({principal.caminho.name}) e não entraram no SPED: {exemplos}"))
+    if arredondadas:
+        pendencias.append(("arquivo", principal.caminho.name, f"{len(arredondadas)} quantidade(s) com mais de 3 casas decimais "
+                           f"arredondadas para 3, como o SPED aceita, sem mudar o valor do item (ex.: {arredondadas[0]})"))
+    if len(total_errado) > 1:
+        exemplos = ", ".join(total_errado[:5]) + ("..." if len(total_errado) > 5 else "")
+        pendencias.append(("arquivo", principal.caminho.name, f"{len(total_errado)} de {len(principal.itens)} itens com total "
+                           f"diferente de quantidade × unitário ({exemplos}): usado quantidade × unitário; confira a "
+                           "fórmula ou a coluna de total do arquivo"))
     for it in principal.itens:
+        it.pendencias = list(dict.fromkeys(it.pendencias))  # a mesma mensagem uma vez só (linhas somadas)
         for msg in it.pendencias:
             pendencias.append(("item", it.codigo, msg))
     return finais, fora
@@ -1065,10 +1163,30 @@ UNIDADES_INTEIRAS = {"UN", "UND", "UNID", "PC", "PCA", "PCS", "PCT", "PCTE", "PT
                      "FD", "SC", "LA", "FR", "TB", "CT", "EMB", "BD", "GL", "BL", "BB"}
 
 
-def conferir_cadastro(itens, emp, args, pendencias):
-    """Avisos sobre o que o arquivo não traz e o app teve de supor: o tipo do item, o NCM e a
-    quantidade fracionada numa unidade que não se divide."""
+# Siglas que querem dizer a mesma unidade (PCT e PCTE são pacote)
+SINONIMOS = [{"UN", "UND", "UNID"}, {"PC", "PCA"}, {"PCT", "PCTE", "PT"}, {"M", "MT"}, {"L", "LT"}, {"G", "GR"}, {"T", "TON"}]
+# Tipos do item que só a indústria tem: matéria-prima, produto em processo, acabado, subproduto, intermediário
+TIPOS_INDUSTRIA = {"01", "03", "04", "05", "06"}
+
+
+def conferir_cadastro(itens, emp, args, pendencias, unidades_desc=None):
+    """Avisos sobre o que o arquivo não traz e o app teve de supor: o tipo do item, o NCM, a
+    quantidade fracionada numa unidade que não se divide e as unidades do 0190."""
     industria = emp.get("ind_ativ") == "0"
+    usadas = {it.unidade for it in itens}
+    desconhecidas = sorted(u for u in usadas if u not in UNIDADES and u not in (unidades_desc or {}))
+    if desconhecidas:
+        pendencias.append(("arquivo", "0190", f"unidade(s) {', '.join(desconhecidas)} fora da tabela conhecida: o 0190 sai com a "
+                           "própria sigla como descrição; confira com o cliente"))
+    for grupo in SINONIMOS:
+        if len(iguais := sorted(usadas & grupo)) > 1:
+            pendencias.append(("arquivo", "0190", f"as siglas {' e '.join(iguais)} são a mesma unidade ({UNIDADES[iguais[0]]}): "
+                               "confira o cadastro do cliente (o app não junta, porque mudaria a unidade dos itens)"))
+    de_industria = sum(1 for it in itens if it.tipo in TIPOS_INDUSTRIA)
+    if de_industria and not industria:
+        pendencias.append(("arquivo", "TIPO_ITEM", f"{de_industria} item(ns) com tipo de indústria no arquivo (01 matéria-prima, "
+                           "04 produto acabado...), mas a Atividade está como Outros: se a empresa é indústria, marque "
+                           "Atividade Industrial"))
     for it in itens:
         if it.qtd != it.qtd.to_integral_value() and it.unidade in UNIDADES_INTEIRAS:
             msg = f"quantidade fracionada ({fmt(it.qtd, 3)}) na unidade {it.unidade}, que não se divide: confira a quantidade ou a unidade"
@@ -1238,11 +1356,6 @@ class Resultado:
 
 def converter(principal, extras, args):
     pendencias, gerados = [], [0]
-    for f in (principal, *extras):
-        for linha in f.nao_lidas:
-            pendencias.append(("arquivo", f.caminho.name, f"linha não lida (confira e corrija o arquivo): {linha[:120]}"))
-        for aviso in f.avisos:
-            pendencias.append(("arquivo", f.caminho.name, aviso))
     if not principal.itens:
         raise ErroConversao(f"{principal.caminho.name} não tem nenhum item: confira se é o arquivo certo "
                             "ou se a planilha foi preenchida.")
@@ -1274,17 +1387,47 @@ def converter(principal, extras, args):
         raise ErroConversao("O arquivo não informa a data do inventário: digite em \"Data do inventário\" (ex.: 31/12/2025) "
                             "e clique em Gerar de novo.", "data_inv")
 
-    emp = dados_empresa([principal, *extras], args, pendencias)
+    # Complemento de outro estabelecimento (matriz x filial) ou de outra data (inventário do
+    # ano anterior): serve só de cadastro. Quantidade e valor dele são de outro inventário.
+    cnpj_base = so_cnpj(args.cnpj or principal.empresa.get("cnpj") or next(
+        (f.empresa.get("cnpj") for f in extras if f.empresa.get("cnpj")), ""))
+    so_cadastro, mesmo_estab = set(), [principal]
+    for f in extras:
+        outro = so_cnpj(f.empresa.get("cnpj"))
+        if outro and cnpj_base and outro != cnpj_base:
+            so_cadastro.add(f.caminho)
+            pendencias.append(("arquivo", f.caminho.name, f"é de outro estabelecimento (CNPJ {outro}): usado só como cadastro "
+                               "(descrição, NCM, unidade e tipo). Para gerar o SPED dele, converta-o sozinho ou clique na "
+                               "estrela para usá-lo como inventário"))
+            continue
+        mesmo_estab.append(f)
+        if f.data_inv and f.data_inv != data_inv:
+            so_cadastro.add(f.caminho)
+            pendencias.append(("arquivo", f.caminho.name, f"é de outra data ({f.data_inv:%d/%m/%Y}): usado só como cadastro "
+                               "(descrição, NCM, unidade e tipo); quantidades e valores não comparados"))
+    # Avisos da leitura de cada arquivo; os de um arquivo que só serve de cadastro não interessam
+    for f in (principal, *extras):
+        if f.caminho in so_cadastro:
+            continue
+        for linha in f.nao_lidas:
+            pendencias.append(("arquivo", f.caminho.name, f"linha não lida (confira e corrija o arquivo): {linha[:120]}"))
+        for aviso in f.avisos:
+            pendencias.append(("arquivo", f.caminho.name, aviso))
+    emp = dados_empresa(mesmo_estab, args, pendencias)
     terceiros = [it for it in principal.itens if it.ind_prop in ("1", "2")]
     participantes = participantes_usados(terceiros, [principal, *extras], args, pendencias) if terceiros else {}
-    itens, fora = complementar(principal, extras, pendencias, gerados, participantes)
-    conferir_cadastro(itens, emp, args, pendencias)
+    itens, fora = complementar(principal, extras, pendencias, gerados, participantes, so_cadastro)
     unidades = {}
     for f in [*extras, principal]:
         unidades.update(f.unidades)
+    conferir_cadastro(itens, emp, args, pendencias, unidades)
     ini, fim = periodo(args, data_inv)
     if data_inv > fim:
         raise ErroConversao(f"A data do inventário ({data_inv:%d/%m/%Y}) é depois do fim do período ({fim:%d/%m/%Y}).", "periodo")
+    if (data_inv.day, data_inv.month) != (31, 12):
+        pendencias.append(("arquivo", "H005", f"inventário em {data_inv:%d/%m/%Y} com o motivo 01 (final do período): para a "
+                           "maioria das empresas o final do período é 31/12. Confira se é o balanço da empresa; os motivos "
+                           "02 a 05 (mudança de regime, encerramento...) exigem o H020, que o app não gera"))
     mes, ano = segundo_mes_depois(data_inv)
     if (ini.month, ini.year) != (mes, ano):
         pendencias.append(("periodo", "", f"pelo Guia Prático, o inventário de {data_inv:%d/%m/%Y} vai na EFD de "
@@ -1315,8 +1458,14 @@ def converter(principal, extras, args):
     if principal.total_declarado is not None:
         dif = total - principal.total_declarado
         if dif:
-            pendencias.append(("total", "", f"total gerado {fmt(total, 2)} difere do total do arquivo {fmt(principal.total_declarado, 2)} em {fmt(dif, 2)}"))
+            pendencias.append(("total", "", f"total gerado {moeda(total)} é {moeda(abs(dif))} {'maior' if dif > 0 else 'menor'} "
+                               f"que o total do arquivo do cliente ({moeda(principal.total_declarado)})"))
     return Resultado(principal, emp, itens, pendencias, reg, total, data_inv, ini, fim, fora)
+
+
+def moeda(valor):
+    """1234567.8 em '1.234.567,80'."""
+    return f"{valor.quantize(DOIS, ROUND_HALF_UP):,.2f}".replace(",", "X").replace(".", ",").replace("X", ".")
 
 
 def numero_dominio(valor):
@@ -1366,8 +1515,14 @@ def gravar(res, pasta):
             w = csv.writer(fp, delimiter=";")
             w.writerow(["tipo", "codigo", "pendencia"])
             # Código como texto (="0509"): o Excel apaga o zero à esquerda de números
+            # Gerais primeiro; depois as de cada item juntas, na ordem em que o item aparece
+            grupos = {}
+            for pend in res.pendencias:
+                grupos.setdefault(pend[1] if pend[0] == "item" else None, []).append(pend)
+            ordem = [*(p for p in res.pendencias if p[0] != "item"),
+                     *(p for c, g in grupos.items() if c is not None for p in g)]
             w.writerows((t, '="' + c.replace('"', '""') + '"' if c[:1].isdigit() else celula_csv(c), celula_csv(m))
-                        for t, c, m in res.pendencias)
+                        for t, c, m in ordem)
     elif arq_pend.exists():
         arq_pend.unlink()
     return arq, arq_pend, arq_dom

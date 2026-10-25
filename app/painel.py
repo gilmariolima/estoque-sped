@@ -160,7 +160,7 @@ def converter(dados):
         })
     # Itens que ficaram fora: com os números que vieram no arquivo e o motivo, para a tela mostrar
     numero = lambda v, casas: gs.fmt(v, casas) if v is not None else ""
-    fora = [{"c": it.codigo, "d": it.descricao, "n": it.ncm, "u": it.unidade, "q": numero(it.qtd, 3),
+    fora = [{"c": it.codigo, "d": it.descricao or "(sem descrição no arquivo)", "n": it.ncm, "u": it.unidade, "q": numero(it.qtd, 3),
              "vu": numero(it.vl_unit, 6), "vt": numero(it.vl_item, 2), "p": list(it.pendencias)} for it in res.fora]
     emp = res.emp
     return {

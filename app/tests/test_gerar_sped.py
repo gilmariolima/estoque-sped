@@ -159,7 +159,9 @@ class Pendencias(unittest.TestCase):
         h010 = campos(linhas, "H010")[0]
         self.assertEqual(h010[3], "1670,341")
         self.assertEqual(h010[5], "3340,68")
-        self.assertTrue(any(c == "Q1" and "1670,3408 arredondada para 1670,341" in m for _, c, m in res.pendencias))
+        # um aviso só para o arquivo: o valor não muda, e não precisa ocupar o filtro "Com pendência"
+        self.assertTrue(any(t == "arquivo" and "Q1 1670,3408 -> 1670,341" in m for t, _, m in res.pendencias))
+        self.assertFalse(any(t == "item" for t, _, _ in res.pendencias))
 
     def test_csv_guarda_codigo_numerico_como_texto(self):
         # O Excel apagava o zero à esquerda: 0509 virava 509
@@ -330,14 +332,14 @@ class Painel(unittest.TestCase):
     def test_pendencias_do_item_e_itens_fora_pelo_painel(self):
         _, corpo = self.pedir("POST", "/api/lote")
         lote = json.loads(corpo)["lote"]
-        csv = "Codigo;Descricao;Qtd;Valor Unit\nA1;UM;1;1,00\nA1;DOIS;1,2345;1,00\nA9;NEG;-1;1,00\n".encode()
+        csv = "Codigo;Descricao;Qtd;Valor Unit;Valor Total\nA1;UM;1;1,00;1,00\nA1;DOIS;2;1,00;5,00\nA9;NEG;-1;1,00;-1,00\n".encode()
         self.pedir("POST", f"/api/enviar?lote={lote}&nome=itens.csv", csv)
         pedido = {"lote": lote, "arquivos": ["itens.csv"],
                   "campos": {"data_inv": "31/12/2025", "cep": "60000-000", "end": "RUA A", "bairro": "CENTRO"}}
         r = json.loads(self.pedir("POST", "/api/converter", json.dumps(pedido).encode())[1])
         por = {i["c"]: i["p"] for i in r["itens"]}
         self.assertEqual(por["A1"], [])
-        self.assertTrue(any("arredondada" in m for m in por["A1-2"]))
+        self.assertTrue(any("total do arquivo 5,00" in m for m in por["A1-2"]))
         self.assertEqual([f["c"] for f in r["fora"]], ["A9"])
         # o item que ficou fora vem com o que o arquivo trazia e o motivo, para a tela mostrar
         self.assertEqual({k: r["fora"][0][k] for k in ("d", "q", "vu")}, {"d": "NEG", "q": "-1,000", "vu": "1,000000"})
