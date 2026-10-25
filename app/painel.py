@@ -43,6 +43,8 @@ CSP = ("default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline';
 RESERVADOS = re.compile(r"(CON|PRN|AUX|NUL|CONIN\$|CONOUT\$|COM[0-9¹²³]|LPT[0-9¹²³])(\..*)?", re.I)
 # Código do desenho do ícone no endereço do favicon: o Edge guarda o ícone por endereço
 VERSAO_ICONE = hashlib.sha1((WEB / "icone.svg").read_bytes()).hexdigest()[:8]
+# Versão do app (o Electron passa no ambiente), mostrada no rodapé do menu
+VERSAO_APP = re.sub(r"[^0-9A-Za-z.+-]", "", os.environ.get("ESTOQUE_VERSAO", ""))[:20]
 trava = threading.Lock()
 
 
@@ -313,6 +315,7 @@ class Painel(BaseHTTPRequestHandler):
                 return self.recusar(rota)
             if rota == "/":
                 pagina = (WEB / "index.html").read_text(encoding="utf-8").replace("__ICONE__", VERSAO_ICONE)
+                pagina = pagina.replace("__VERSAO__", f"Versão {VERSAO_APP}" if VERSAO_APP else "")
                 return self.responder(pagina.encode("utf-8"), TIPOS[".html"])
             if rota == "/api/gerados":
                 return self.responder(gerados())
